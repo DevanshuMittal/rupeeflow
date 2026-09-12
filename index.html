@@ -434,7 +434,7 @@ textarea{min-height:64px;resize:vertical}
 
 /* Bump this on every release — tools/bump.js updates it here and in sw.js.
    The running build is compared against the deployed one to offer in-app updates. */
-const APP_BUILD = '1.2.1+2026-09-12.2';
+const APP_BUILD = '1.3.0+2026-09-12.3';
 
 /* ---------------------------------- 1. utils ------------------------------- */
 const $  = (s, r = document) => r.querySelector(s);
@@ -753,6 +753,7 @@ const DEFAULT_SETTINGS = {
   name: 'Developer', email: '', workCity: 'Bengaluru', homeCity: 'Delhi',
   pin: '', lockOnOpen: false, autoSync: true, clientId: '', sheetId: '', sheetName: '',
   lastSync: 0, lastSyncDir: '', demo: true, roundUp: true, hideBalances: false,
+  syncGuard: false, deviceId: '', seenRev: 0,
   custom: JSON.parse(JSON.stringify(DEFAULT_CUSTOM))
 };
 
@@ -908,7 +909,12 @@ function save(now) {
   clearTimeout(saveT); saveT = setTimeout(() => { Store.set(KEY, S); }, 400);
   setSyncState('dirty');
   if (now) Store.set(KEY, S);
-  if (S.settings.autoSync && G.token) { clearTimeout(syncT); syncT = setTimeout(() => G_.push(true), 4000); }
+  /* never auto-push before this device has reconciled with Drive (syncGuard), and never
+     while a merge is running — otherwise a fresh install overwrites the real copy. */
+  if (S.settings.autoSync && G.token && !S.settings.syncGuard) {
+    clearTimeout(syncT);
+    syncT = setTimeout(() => { if (!G.busy && !S.settings.syncGuard) G_.push(true); }, 4000);
+  }
 }
 
 
@@ -1795,7 +1801,7 @@ function txDetail(id) {
         save(); closeSheet(); toast('Duplicated to today'); rerender();
       };
       $('[data-x=del]', f).onclick = () => confirmSheet('Delete transaction?', `This removes <b>${inr(t.amount)}</b> (${esc(t.note || c.name)}) permanently from your phone and your Drive sheet.`, 'Delete', () => {
-        S.transactions = S.transactions.filter(x => x.id !== t.id); save(); toast('Deleted'); rerender();
+        markDel('tx', t.id); S.transactions = S.transactions.filter(x => x.id !== t.id); save(); toast('Deleted'); rerender();
       });
     }
   });
@@ -2097,7 +2103,7 @@ function accSheet(id) {
       $$('[data-co]', b).forEach(x => x.onclick = () => { d.color = x.dataset.co; $$('[data-co]', b).forEach(y => y.classList.toggle('on', y === x)); });
       $('[data-x=c]', f).onclick = () => backSheet();
       if (editing) $('[data-x=d]', f).onclick = () => confirmSheet('Delete account?', 'Transactions in this account will stay in your records but lose the link.', 'Delete', () => {
-        S.accounts = S.accounts.filter(a => a.id !== editing.id); save(); toast('Account deleted'); rerender();
+        markDel('acc', editing.id); S.accounts = S.accounts.filter(a => a.id !== editing.id); save(); toast('Account deleted'); rerender();
       });
       $('[data-x=s]', f).onclick = () => {
         d.name = $('#aName').value.trim() || 'Account'; d.type = $('#aType').value; d.open = round2($('#aOpen').value || 0); d.note = $('#aNote').value.trim();
@@ -2170,7 +2176,7 @@ function catEditSheet(id) {
     onMount(b, f) {
       $('[data-x=s]', f).onclick = () => { const n = $('#ceName').value.trim(); if (!n) return toast('Name required'); c.name = n; save(); closeSheet(); renderCategories(); toast('Category renamed'); };
       $('[data-x=d]', f).onclick = () => confirmSheet('Delete category?', `“${esc(c.name)}” will be removed. Its transactions move to Miscellaneous.`, 'Delete', () => {
-        S.categories = S.categories.filter(x => x.id !== id);
+        markDel('cat', id); S.categories = S.categories.filter(x => x.id !== id);
         S.transactions.forEach(t => { if (t.cat === id) t.cat = 'c_misc'; });
         save(); closeSheet(); renderCategories(); toast('Category deleted');
       });
@@ -2241,7 +2247,7 @@ function recurSheet(id) {
       $$('.typepick button', b).forEach(t => t.onclick = () => { d.type = t.dataset.t; $$('.typepick button', b).forEach(x => x.classList.toggle('on', x === t)); d.cat = S.categories.find(c => c.type === d.type).id; const s = $('#rCat'); s.innerHTML = S.categories.filter(c => c.type === d.type).map(c => `<option value="${c.id}">${c.e} ${esc(c.name)}</option>`).join(''); });
       $('[data-x=c]', f).onclick = () => backSheet();
       if (editing) $('[data-x=d]', f).onclick = () => confirmSheet('Delete recurring item?', `“${esc(d.name)}” will no longer be forecast. Past transactions stay.`, 'Delete', () => {
-        S.recurring = S.recurring.filter(r => r.id !== editing.id); save(); toast('Removed'); renderRecurring();
+        markDel('rec', editing.id); S.recurring = S.recurring.filter(r => r.id !== editing.id); save(); toast('Removed'); renderRecurring();
       });
       $('[data-x=s]', f).onclick = () => {
         d.name = $('#rName').value.trim() || 'Recurring'; d.amount = round2($('#rAmt').value || 0); d.day = clamp(+$('#rDay').value || 1, 1, 28);
@@ -2308,7 +2314,7 @@ function goalSheet(id) {
     onMount(b, f) {
       $$('[data-e]', b).forEach(x => x.onclick = () => { d.e = x.dataset.e; $$('[data-e]', b).forEach(y => y.classList.toggle('on', y === x)); });
       const del = $('[data-x=d]', f); if (del) del.onclick = () => confirmSheet('Delete goal?', `“${esc(d.name)}” and its progress will be removed.`, 'Delete', () => {
-        S.goals = S.goals.filter(x => x.id !== id); save(); closeSheet(); renderGoals(); toast('Goal deleted');
+        markDel('goal', id); S.goals = S.goals.filter(x => x.id !== id); save(); closeSheet(); renderGoals(); toast('Goal deleted');
       });
       const add = $('[data-x=add]', f); if (add) add.onclick = () => promptSheet('Add to ' + d.name, 'Amount to add (₹)', '', (v) => {
         const n = round2(v); if (!(n > 0)) return toast('Enter an amount');
@@ -2555,6 +2561,7 @@ function monthlySummaryText(ym) {
    ========================================================================== */
 const G = {
   token: '', exp: 0, tokenClient: null, status: 'off', msg: '', userEmail: '', userName: '',
+  busy: false, mergeInfo: null,
   scopes: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email',
   get ready() { return !!this.token && Date.now() < this.exp - 30000; }
 };
@@ -2642,7 +2649,7 @@ const G_ = {
     } catch (e) { }
     return S.settings.sheetId;
   },
-  tables() {
+  tables(rev_) {
     const T = [];
     T.push({ tab: 'Transactions', rows: [['Date', 'Time', 'Type', 'Category', 'Amount', 'Account', 'To', 'Note', 'Tags', 'Reimbursement', 'ID', 'Updated'],
       ...S.transactions.slice().sort(sortTxDesc).map(t => [t.date, t.time || '', t.type, catById(t.cat).name, t.amount, accById(t.acc).name, t.to ? accById(t.to).name : '', t.note || '', (t.tags || []).join(' '), t.reimb === 1 ? 'due' : t.reimb === 2 ? 'settled' : '', t.id, new Date(t.updated || Date.now()).toISOString()])] });
@@ -2658,7 +2665,8 @@ const G_ = {
     const json = JSON.stringify(snapshot());
     const CHUNK = 40000, parts = [];
     for (let i = 0; i < json.length; i += CHUNK) parts.push([json.slice(i, i + CHUNK)]);
-    T.push({ tab: 'Backup', rows: [['RF-BACKUP-V1'], ...parts] });
+    const rev = (rev_) == null ? (S.meta.rev || 1) : rev_;
+    T.push({ tab: 'Backup', rows: [['RF-BACKUP-V1', rev, Date.now()], ...parts] });
     return T;
   },
   async write(tabs) {
@@ -2671,25 +2679,99 @@ const G_ = {
       body: JSON.stringify({ valueInputOption: 'RAW', data: tabs.map(t => ({ range: `${t.tab}!A1`, values: t.rows.map(r => r.map(v => v == null ? '' : v)) })) })
     });
   },
-  async push(silent) {
+  async push(silent, force) {
     if (!G.ready) { if (!silent) throw new Error('Not connected to Google'); return; }
-    setSyncState('syncing');
+    if (G.busy) return;
+    G.busy = true;
     try {
-      const tabs = G_.tables(); const backup = tabs.pop();
+      /* someone else may have written since our last merge — never clobber them */
+      const probe = await G_.remoteRev();
+      const seen = +S.settings.seenRev || 0;
+      if (!force && probe.rev > seen) {
+        G.busy = false;
+        setSyncState('dirty', 'Another device synced — merging first');
+        return await G_.reconcile(silent ? 'open' : 'manual');
+      }
+      const newRev = Math.max(probe.rev, seen) + 1;
+      S.meta.rev = newRev;
+      const tabs = G_.tables(newRev); const backup = tabs.pop();
       await G_.write(tabs); await G_.write([backup]);  /* backup JSON written last = atomic-ish marker */
       /* verify the restore payload actually round-trips before claiming success */
       const check = await G_.readBackup().catch(() => null);
       if (!check || !check.transactions || check.transactions.length !== S.transactions.length) {
         throw new Error('Verification failed — the sheet did not read back correctly');
       }
-      S.settings.lastSync = Date.now(); S.settings.lastSyncDir = 'push'; save(true);
-      setSyncState('synced'); if (!silent) toast('Saved to Google Drive ✓ (' + S.transactions.length + ' entries)');
+      S.settings.seenRev = newRev;
+      S.settings.lastSync = Date.now(); S.settings.lastSyncDir = 'push';
+      G.busy = false; save(true);
+      setSyncState('synced'); if (!silent) toast('Saved to Google Drive (' + S.transactions.length + ' entries)');
       rerender();
     } catch (e) {
       if (e.message === 'AUTH') { setSyncState('error', 'Session expired — reconnect'); }
       else setSyncState('error', e.message);
       if (!silent) toast('Sync failed: ' + e.message);
-    }
+    } finally { G.busy = false; }
+  },
+  /* Reconcile = the one sync operation: read Drive, merge, publish. Never overwrites blind.
+     mode: 'connect' (just signed in) | 'open' (app launch) | 'manual' (Sync now) */
+  async reconcile(mode) {
+    if (!G.ready) { if (mode === 'manual') toast('Connect a Google account first'); return null; }
+    if (G.busy) return null;
+    G.busy = true;
+    setSyncState('syncing');
+    try {
+      const probe = await G_.remoteRev();
+      const remote = await G_.readBackup();
+      /* trust the sheet's own monotonic rev, not the writer's local counter */
+      if (remote && probe.rev) { remote.meta = Object.assign({}, remote.meta || {}, { rev: probe.rev }); }
+      S.settings.seenRev = Math.max(+S.settings.seenRev || 0, probe.rev);
+      if (!remote || !remote.transactions) {
+        /* Drive is empty — this device seeds it */
+        S.settings.syncGuard = false; save(true);
+        G.busy = false;
+        await G_.push(true);
+        if (mode === 'connect') toast('Backed up to your Google Sheet');
+        return { dir: 'seed' };
+      }
+      if (isPristineLocal()) {
+        /* fresh install still showing starter data: adopt Drive, never overwrite it */
+        stashLocal();
+        applySnapshot(remote);
+        S.settings.syncGuard = false; save(true);
+        toast('Loaded ' + remote.transactions.length + ' entries from Google Drive', 2600);
+        G.busy = false; rerender();
+        return { dir: 'adopt', count: remote.transactions.length };
+      }
+      const before = JSON.stringify(snapshot());
+      const localHad = S.transactions.length;
+      const merged = mergeSnapshots(snapshot(), remote);
+      const changed = JSON.stringify(merged) !== before;
+      if (changed) { stashLocal(); applySnapshot(merged); }
+      S.settings.syncGuard = false; save(true);
+      G.busy = false;
+      await G_.push(true);                        /* publish the merged result */
+      setSyncState('synced');
+      const gained = Math.max(0, S.transactions.length - localHad);
+      if (mode === 'manual') toast(changed ? (gained ? 'Merged ' + gained + ' new entr' + (gained === 1 ? 'y' : 'ies') + ' from Drive' : 'Synced both ways') : 'Already up to date', 2400);
+      else if (gained) toast('Merged ' + gained + ' new entr' + (gained === 1 ? 'y' : 'ies') + ' from Drive', 2400);
+      rerender();
+      return { dir: 'merge', changed, gained };
+    } catch (e) {
+      setSyncState('error', e.message === 'AUTH' ? 'Session expired — reconnect' : e.message);
+      if (mode === 'manual') toast('Sync failed: ' + e.message);
+      return { error: e.message };
+    } finally { G.busy = false; }
+  },
+  /* The Backup tab's first row is the marker: ['RF-BACKUP-V1', rev, writtenAt]. Reading just that
+     row is one tiny request, and the rev it returns is monotonic — maintained by the sheet itself —
+     which lets a push detect that another device wrote since our last merge. */
+  async remoteRev() {
+    const sid = await G_.ensure();
+    try {
+      const r = await gfetch(`https://sheets.googleapis.com/v4/spreadsheets/${sid}/values/Backup!A1:C1`);
+      const row = (r.values || [])[0] || [];
+      return { rev: row[0] === 'RF-BACKUP-V1' ? (+row[1] || 0) : 0, marker: row[0] || '', at: +row[2] || 0 };
+    } catch (e) { return { rev: 0, marker: '', at: 0 }; }
   },
   async readBackup() {
     const sid = await G_.ensure();
@@ -2719,6 +2801,79 @@ const G_ = {
     } catch (e) { setSyncState('error', e.message); if (!silent) toast('Pull failed: ' + e.message); }
   }
 };
+/* ============================================================================
+   23c. Multi-device sync — merge, never overwrite
+   ---------------------------------------------------------------------------
+   Phone + laptop share one Google Sheet. Pushing the whole snapshot blindly meant
+   whichever device saved last erased the other's entries. Now:
+     * every delete leaves a tombstone (meta.del) so a merge cannot resurrect it
+     * merges union by id — newest `updated` wins, tombstones win over both
+     * a device that has never synced (syncGuard) can never overwrite Drive
+   ========================================================================== */
+function deviceId() {
+  if (!S.settings.deviceId) S.settings.deviceId = 'dev-' + Math.random().toString(36).slice(2, 7);
+  return S.settings.deviceId;
+}
+function markDel(kind, id) {
+  if (!id) return;
+  const m = S.meta = S.meta || {};
+  m.del = m.del || {};
+  m.del[kind + ':' + id] = Date.now();
+  const keys = Object.keys(m.del);
+  if (keys.length > 900) keys.sort((a, b) => m.del[a] - m.del[b]).slice(0, keys.length - 900).forEach(k => delete m.del[k]);
+}
+const SYNC_LISTS = [['transactions', 'tx'], ['accounts', 'acc'], ['categories', 'cat'], ['tags', 'tag'],
+  ['recurring', 'rec'], ['goals', 'goal'], ['loans', 'loan'], ['templates', 'tpl'], ['customFields', 'field'], ['rules', 'rule']];
+function mergeSnapshots(local, remote) {
+  const out = {};
+  const lUpd = (local.meta && local.meta.updated) || 0, rUpd = (remote.meta && remote.meta.updated) || 0;
+  const localNewer = lUpd >= rUpd;
+  const del = Object.assign({}, (remote.meta && remote.meta.del) || {}, (local.meta && local.meta.del) || {});
+  const dead = (kind, id) => !!del[kind + ':' + id];
+  const pick = (a, b) => {                       /* newest edit wins; the device you hold breaks ties */
+    const au = +a.updated || 0, bu = +b.updated || 0;
+    if (au !== bu) return au > bu ? a : b;
+    return localNewer ? a : b;
+  };
+  for (const [key, kind] of SYNC_LISTS) {
+    const A = local[key] || [], B = remote[key] || [];
+    if (A.every(x => typeof x === 'string') && B.every(x => typeof x === 'string')) {
+      out[key] = [...new Set([...A, ...B])];      /* plain string lists (tags) — union */
+      continue;
+    }
+    const m = new Map();
+    B.forEach(x => { if (x && x.id) m.set(x.id, x); });
+    A.forEach(x => { if (x && x.id) m.set(x.id, m.has(x.id) ? pick(x, m.get(x.id)) : x); });
+    out[key] = [...m.values()].filter(x => !dead(kind, x.id));
+  }
+  /* budgets are tiny month maps: newer device wins per month, union for months only one side has */
+  const lB = local.budgets || {}, rB = remote.budgets || {}, bud = {};
+  [...new Set([...Object.keys(lB), ...Object.keys(rB)])].forEach(ym => {
+    bud[ym] = (lB[ym] && rB[ym]) ? (localNewer ? lB[ym] : rB[ym]) : (lB[ym] || rB[ym]);
+  });
+  out.budgets = bud;
+  out.prefs = Object.assign({}, remote.prefs || {}, local.prefs || {});
+  out.meta = Object.assign({}, remote.meta || {}, local.meta || {}, {
+    del, updated: Math.max(lUpd, rUpd), rev: Math.max(+(local.meta && local.meta.rev) || 0, +(remote.meta && remote.meta.rev) || 0)
+  });
+  out.v = 2;
+  return out;
+}
+/* a device that has never synced and still shows starter data must never overwrite Drive */
+function isPristineLocal() {
+  if (S.settings.lastSync) return false;
+  if (S.settings.demo) return true;
+  return S.transactions.length === 0;
+}
+const PREMERGE_KEY = 'rf.premerge.v1';
+function stashLocal() { try { Store.set(PREMERGE_KEY, { at: Date.now(), snap: snapshot() }); } catch (e) { } }
+function premergeInfo() { const x = Store.get(PREMERGE_KEY, null); return x && x.snap ? x : null; }
+function undoMerge() {
+  const x = premergeInfo(); if (!x) return toast('Nothing to undo');
+  Store.set(PREMERGE_KEY, null);
+  applySnapshot(x.snap);
+  save(true); setSyncState('synced'); rerender(); toast('Reverted to this device’s copy');
+}
 function snapshot() {
   const c = S.settings.custom || DEFAULT_CUSTOM;
   return {
@@ -2726,15 +2881,24 @@ function snapshot() {
     recurring: S.recurring, goals: S.goals, tags: S.tags, loans: S.loans || [],
     customFields: S.customFields || [], templates: S.templates || [], rules: S.rules || [],
     prefs: { cycleStart: c.cycleStart, decimals: c.decimals, symbol: c.symbol, showPaise: c.showPaise, negStyle: c.negStyle, compact: c.compact },
-    meta: S.meta, v: 2
+    meta: Object.assign({}, S.meta, { device: deviceId() }), v: 2
   };
 }
 function applySnapshot(snap) {
   S.transactions = snap.transactions || []; S.accounts = snap.accounts || S.accounts; S.categories = snap.categories || S.categories;
   S.budgets = snap.budgets || {}; S.recurring = snap.recurring || []; S.goals = snap.goals || []; S.tags = snap.tags || []; S.loans = snap.loans || [];
+  /* the customisation layer travels with the snapshot too, so a new device looks identical */
+  if (snap.customFields) S.customFields = snap.customFields;
+  if (snap.templates) S.templates = snap.templates;
+  if (snap.rules) S.rules = snap.rules;
+  if (snap.prefs) {
+    const had = cycleStart();
+    Object.assign(S.settings.custom, snap.prefs);
+    if (cycleStart() !== had) curYM = currentYM();
+  }
   S.meta = Object.assign({}, S.meta, snap.meta || {}); S.meta.updated = Date.now();
   S.settings.lastSync = Date.now(); S.settings.lastSyncDir = 'pull';
-  save(true); setSyncState('synced'); rerender();
+  save(true); applyTheme(); setSyncState('synced'); rerender();
 }
 window.renderSync = function () {
   const on = G.status;
@@ -2750,20 +2914,39 @@ window.renderSync = function () {
       <span id="syncPill" class="tag"></span>
     </div>
     <div class="sep"></div>
-    <div class="kv"><span>Last sync</span><b>${S.settings.lastSync ? timeAgo(S.settings.lastSync) + ' · ' + (S.settings.lastSyncDir === 'pull' ? 'pulled' : 'pushed') : 'never'}</b></div>
+    <div class="kv"><span>Last sync</span><b>${S.settings.lastSync ? timeAgo(S.settings.lastSync) + ' · ' + (S.settings.lastSyncDir === 'pull' ? 'merged from Drive' : 'sent to Drive') : 'never'}</b></div>
+    <div class="kv"><span>This device</span><b>${esc(deviceId())} · rev ${S.meta.rev || 1}</b></div>
     <div class="kv"><span>Auto-sync after every change</span><b>${S.settings.autoSync ? 'on' : 'off'}</b></div>
+    ${S.settings.syncGuard ? `<div class="kv"><span>Protection</span><b style="color:var(--warn,#B45309)">Drive copy locked until first merge</b></div>` : ''}
     <div class="kv"><span>Stored on this phone</span><b>${Store.ok ? 'browser storage' : 'memory only (preview mode)'}</b></div>
     ${sid ? `<div class="kv"><span>Sheet</span><b><a href="https://docs.google.com/spreadsheets/d/${sid}" target="_blank" rel="noopener">Open in Drive ↗</a></b></div>` : ''}
   </div>
 
   <div class="actionsrow" style="margin-top:12px">
     ${G.ready ? `<button class="btn soft" data-act="disconnect">Disconnect</button>
-      <button class="btn primary grow" data-act="syncnow">🔄 Sync now</button>`
+      <button class="btn primary grow" data-act="syncnow">🔄 Sync now (merge)</button>`
       : `<button class="btn primary block" data-act="connect">${G.userEmail || S.settings.email ? '🔄 Reconnect Google account' : '🔗 Connect Google account'}</button>`}
   </div>
   ${G.ready ? `<div class="actionsrow" style="margin-top:8px">
-    <button class="btn soft sm grow" data-act="push">⬆ Send phone → Drive</button>
-    <button class="btn soft sm grow" data-act="pull">⬇ Load Drive → phone</button></div>` : ''}
+    <button class="btn soft sm grow" data-act="push">⬆ Force this device → Drive</button>
+    <button class="btn soft sm grow" data-act="pull">⬇ Force Drive → this device</button></div>` : ''}
+  ${premergeInfo() ? `<div class="actionsrow" style="margin-top:8px">
+    <button class="btn soft sm grow" data-act="undo">↩︎ Undo last sync (back to ${timeAgo(premergeInfo().at)})</button></div>` : ''}
+
+  <div class="section"><div class="section-head"><h2>The same data on phone + laptop</h2></div>
+    <div class="card pad">
+      <ol style="margin:0;padding-left:18px;font-size:13.2px;line-height:1.65">
+        <li>Both devices must open the <b>same web address</b> (your GitHub Pages URL is ideal — one address covers both).</li>
+        <li>On each device: paste the <b>same OAuth Client ID</b> and <b>Connect</b> using the <b>same Google account</b>.</li>
+        <li>That's it. Whichever device you use pulls the latest entries on launch and pushes your changes back within seconds.</li>
+      </ol>
+      <div class="tiny muted" style="margin-top:10px">
+        <b>Merging, not overwriting:</b> entries are matched by id and the newest edit wins, so a note added on the phone
+        shows up on the laptop and nothing is silently erased. Deleting an entry also syncs (tombstones), so it won't come back.
+      </div>
+      ${G.ready ? '' : `<div class="tiny" style="margin-top:8px">Not connected right now — your data stays on this device until you connect.</div>`}
+    </div>
+  </div>
 
   <div class="opt-row card" style="margin-top:14px;border-radius:var(--r-lg)">
     <div class="grow"><strong>Auto-sync</strong><span>Push silently every few seconds after a change</span></div>
@@ -2775,7 +2958,7 @@ window.renderSync = function () {
       <ol style="margin:0;padding-left:18px;font-size:13.2px;line-height:1.65">
         <li>Open <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console → Credentials</a> and create a project (any name).</li>
         <li>Click <b>Create credentials → OAuth client ID → Web application</b>.</li>
-        <li>Under <b>Authorised JavaScript origins</b> add the exact address where this app is hosted (e.g. <code>https://yourname.github.io</code> — no trailing slash, no path).</li>
+        <li>Under <b>Authorised JavaScript origins</b> add the address where this app is hosted — just the origin, e.g. <code>https://yourname.github.io</code> (no trailing slash, no path). <b>One origin covers phone and laptop</b> when both open the same URL.</li>
         <li>Enable the <b>Google Sheets API</b> and <b>Google Drive API</b> for the project (APIs &amp; Services → Library).</li>
         <li>Copy the Client ID (ends with <code>.apps.googleusercontent.com</code>) and paste it below, then connect.</li>
       </ol>
@@ -3026,7 +3209,7 @@ document.addEventListener('click', (ev) => {
     case 'logrecur': return logRecurring(id);
     case 'newloan': return loanSheet(null);
     case 'editloan': return loanSheet(+i);
-    case 'dellloan': return confirmSheet('Delete loan?', 'The loan tracker entry is removed. Transactions are not touched.', 'Delete', () => { S.loans.splice(+i, 1); save(true); renderLoans(); toast('Loan removed'); });
+    case 'dellloan': return confirmSheet('Delete loan?', 'The loan tracker entry is removed. Transactions are not touched.', 'Delete', () => { markDel('loan', (S.loans[+i] || {}).id); S.loans.splice(+i, 1); save(true); renderLoans(); toast('Loan removed'); });
     case 'paidone': S.loans[+i].paid = (S.loans[+i].paid || 0) + 1; save(true); renderLoans(); return toast('EMI marked paid (' + S.loans[+i].paid + '/' + S.loans[+i].months + ')');
     case 'settlereimb': case 'reimbsettle': {
       const t = S.transactions.find(x => x.id === id); if (!t) return;
@@ -3052,14 +3235,20 @@ document.addEventListener('click', (ev) => {
     case 'connect': {
       const cid = ($('#cid') || {}).value || S.settings.clientId;
       if (!cid) return toast('Paste your OAuth Client ID first');
-      return G_.connect(cid).then(() => { toast('Connected — syncing'); return G_.push(true).then(() => { toast('Linked to Google Drive ✓'); renderSync(); }); })
+      S.settings.syncGuard = true; save(true);      /* block auto-push until we have merged */
+      return G_.connect(cid)
+        .then(() => { toast('Connected — checking Google Drive', 2000); return G_.reconcile('connect'); })
+        .then(r => { if (r && r.dir === 'seed') toast('This device is now the master copy'); renderSync(); })
         .catch(e => toast('Could not connect: ' + e.message));
     }
     case 'disconnect': return confirmSheet('Disconnect Google?', 'Local data stays on this phone and in your sheet. You can reconnect any time.', 'Disconnect', () => {
       G.token = ''; G.userEmail = ''; S.settings.sheetId = ''; save(true); setSyncState('off'); renderSync(); toast('Disconnected');
     });
-    case 'syncnow': return G_.push(false);
-    case 'push': return G_.push(false);
+    case 'syncnow': return G_.reconcile('manual');
+    case 'undo': return undoMerge();
+    case 'push': return confirmSheet('Force this device → Drive?',
+      'This uploads <b>this device\u2019s</b> copy and replaces whatever is in the sheet. Entries that exist only on the other device will be lost. “Sync now” merges instead and is almost always what you want.',
+      'Overwrite Drive', () => G_.push(false, true));
     case 'pull': return G_.pull(false);
     case 'saveclient': S.settings.clientId = ($('#cid') || {}).value || ''; save(true); return toast('Client ID saved');
     case 'usetoken': { const v = ($('#manTok') || {}).value || ''; if (v.length < 20) return toast('Paste a valid token'); G.token = v.trim(); G.exp = Date.now() + 3600e3; setSyncState('off'); return G_.push(false); }
@@ -3358,7 +3547,7 @@ function installAPI() {
     },
     addMany(list) { return (list || []).map(t => this.add(t)); },
     update(id, patch) { const t = S.transactions.find(x => x.id === id); if (!t) return null; Object.assign(t, patch, { updated: Date.now() }); save(true); rfEmit('change', t); rerender(); return t; },
-    remove(id) { const n = S.transactions.length; S.transactions = S.transactions.filter(x => x.id !== id); save(true); rerender(); return n !== S.transactions.length; },
+    remove(id) { const n = S.transactions.length; markDel('tx', id); S.transactions = S.transactions.filter(x => x.id !== id); save(true); rerender(); return n !== S.transactions.length; },
     find: (fn) => S.transactions.filter(fn),
     totals: (from, to) => totals(txIn(from || '0000-01-01', to || '9999-12-31')),
     /* --- automation --- */
@@ -3380,6 +3569,8 @@ function installAPI() {
       save(true); applyTheme(); renderNav(); rerender(); return v;
     },
     /* --- io --- */
+    sync: (mode) => G_.reconcile(mode || 'manual'),
+    deviceId: () => deviceId(),
     export: snapshot,
     import: (json) => { const obj = typeof json === 'string' ? JSON.parse(json) : json; applySnapshot(obj); toast('Imported ' + (obj.transactions || []).length + ' transactions'); return true; },
     csv: (from, to) => csvFor(txIn(from || '0000-01-01', to || '9999-12-31')),
@@ -3481,8 +3672,22 @@ function init() {
   go(SCREENS.includes(h) ? h : 'home', true);
   if (!S.settings.onboarded) setTimeout(onboarding, 350);
   else if (S.settings.pin && S.settings.lockOnOpen) lockScreen(true);
+  /* launch sync: sign in silently with the remembered account, then merge with Drive.
+     This is what makes the laptop show the phone's latest data without any tapping. */
+  if (S.settings.clientId && S.settings.email && navigator.onLine && !S.settings.noAutoConnect) {
+    setTimeout(() => {
+      S.settings.syncGuard = true; save(true);
+      G_.connect(S.settings.clientId, true).then(() => G_.reconcile('open')).catch(() => {
+        /* silent sign-in failed (needs a tap, or offline): only lift the guard on a device that has
+           already merged once — a never-synced device must stay protected. */
+        if (S.settings.lastSync) { S.settings.syncGuard = false; paintsync(); }
+      });
+    }, 1800);
+  }
   /* sync on reconnect */
-  window.addEventListener('online', () => { if (S.settings.autoSync && G.token && G.status === 'dirty') G_.push(true); });
+  window.addEventListener('online', () => {
+    if (G.ready) { if (S.settings.syncGuard) G_.reconcile('open'); else if (S.settings.autoSync && G.status === 'dirty') G_.push(true); }
+  });
   window.addEventListener('offline', () => { if (G.token) setSyncState('error', 'Offline — changes stored locally'); });
   /* auto-lock after 5 min in background */
   let hid = 0;
@@ -3761,7 +3966,7 @@ function renderCustomize() {
   $$('[data-rule-on]', R).forEach(el => el.onchange = () => { const r = S.rules.find(x => x.id === el.dataset.ruleOn); r.enabled = el.checked; custSave(r.enabled ? 'Rule enabled' : 'Rule paused'); });
   $$('[data-rule-edit]', R).forEach(el => el.onclick = () => ruleSheet(el.dataset.ruleEdit));
   $$('[data-rule-json]', R).forEach(el => el.onclick = () => ruleJsonSheet(el.dataset.ruleJson));
-  $$('[data-rule-del]', R).forEach(el => el.onclick = () => confirmSheet('Delete rule?', 'Automation will stop applying it. Existing transactions are untouched.', 'Delete', () => { S.rules = S.rules.filter(x => x.id !== el.dataset.ruleDel); custSave('Rule deleted'); }));
+  $$('[data-rule-del]', R).forEach(el => el.onclick = () => confirmSheet('Delete rule?', 'Automation will stop applying it. Existing transactions are untouched.', 'Delete', () => { markDel('rule', el.dataset.ruleDel); S.rules = S.rules.filter(x => x.id !== el.dataset.ruleDel); custSave('Rule deleted'); }));
   /* format */
   $$('[data-fmt]', R).forEach(el => {
     const k = el.dataset.fmt;
@@ -3804,7 +4009,7 @@ function fieldSheet(id) {
       $('#cfKey', b).oninput = e => { e.target.dataset.touched = '1'; };
       $('[data-x=c]', ft).onclick = () => backSheet();
       if (f) $('[data-x=d]', ft).onclick = () => confirmSheet('Delete field?', `“${esc(f.label)}” is removed from the form. Existing values stay in the JSON backup.`, 'Delete', () => {
-        S.customFields = S.customFields.filter(x => x.id !== f.id); closeSheet(); custSave('Field deleted');
+        markDel('field', f.id); S.customFields = S.customFields.filter(x => x.id !== f.id); closeSheet(); custSave('Field deleted');
       });
       $('[data-x=s]', ft).onclick = () => {
         const label = $('#cfLabel', b).value.trim(); if (!label) return toast('Give the field a label');
@@ -3839,7 +4044,7 @@ function tplSheet(id) {
       $$('[data-e]', b).forEach(x => x.onclick = () => { d.e = x.dataset.e; $$('[data-e]', b).forEach(y => y.classList.toggle('on', y === x)); });
       $('#tpType', b).onchange = e => { const s = $('#tpCat', b); s.innerHTML = S.categories.filter(x => x.type === e.target.value).map(x => `<option value="${x.id}">${x.e} ${esc(x.name)}</option>`).join(''); };
       $('[data-x=c]', ft).onclick = () => backSheet();
-      if (t) $('[data-x=d]', ft).onclick = () => confirmSheet('Delete template?', `“${esc(t.label)}” will no longer appear on the dashboard.`, 'Delete', () => { S.templates = S.templates.filter(x => x.id !== t.id); closeSheet(); custSave('Template deleted'); });
+      if (t) $('[data-x=d]', ft).onclick = () => confirmSheet('Delete template?', `“${esc(t.label)}” will no longer appear on the dashboard.`, 'Delete', () => { markDel('tpl', t.id); S.templates = S.templates.filter(x => x.id !== t.id); closeSheet(); custSave('Template deleted'); });
       $('[data-x=s]', ft).onclick = () => {
         const label = $('#tpLabel', b).value.trim(); if (!label) return toast('Give it a label');
         const rec = { id: t ? t.id : uid('tp'), label, e: d.e, type: $('#tpType', b).value, amount: round2($('#tpAmt', b).value || 0),
