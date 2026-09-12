@@ -272,10 +272,12 @@ textarea{min-height:64px;resize:vertical}
   color:var(--onaccent);font-size:12.8px;font-weight:650;box-shadow:0 6px 18px -8px var(--accent)}
 .updbar .btn{background:rgba(255,255,255,.22);border-color:transparent;color:inherit;backdrop-filter:blur(4px)}
 .updbar .iconbtn{background:transparent;border-color:transparent;color:inherit;width:30px;height:30px;flex:0 0 30px}
-.toast{position:fixed;left:50%;transform:translate(-50%,140%);bottom:calc(var(--nav-h) + 26px);z-index:120;pointer-events:none;
+.toast{position:fixed;left:50%;transform:translate(-50%,180%);bottom:calc(var(--nav-h) + 26px);z-index:120;pointer-events:none;
   background:var(--text);color:var(--bg);padding:11px 16px;border-radius:99px;font-size:13px;font-weight:650;
-  box-shadow:var(--shadow-2);transition:transform var(--spring);max-width:88vw;text-align:center}
-.toast.on{transform:translate(-50%,0)}
+  box-shadow:var(--shadow-2);max-width:88vw;text-align:center;
+  opacity:0;visibility:hidden;transition:transform var(--spring),opacity .22s ease,visibility 0s linear .3s}
+.toast.on{transform:translate(-50%,0);opacity:1;visibility:visible;
+  transition:transform var(--spring),opacity .15s ease,visibility 0s}
 .pinpad{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;max-width:280px;margin:0 auto}
 .pindots{display:flex;gap:12px;justify-content:center;margin:22px 0}
 .pindots i{width:14px;height:14px;border-radius:50%;border:2px solid var(--border);transition:all var(--fast)}
@@ -432,7 +434,7 @@ textarea{min-height:64px;resize:vertical}
 
 /* Bump this on every release — tools/bump.js updates it here and in sw.js.
    The running build is compared against the deployed one to offer in-app updates. */
-const APP_BUILD = '1.2.0+2026-09-12.1';
+const APP_BUILD = '1.2.1+2026-09-12.2';
 
 /* ---------------------------------- 1. utils ------------------------------- */
 const $  = (s, r = document) => r.querySelector(s);
@@ -3370,7 +3372,10 @@ function installAPI() {
     templates: { list: () => S.templates, add: (t) => { const rec = Object.assign({ id: uid('tp'), e: '⚡', type: 'expense', amount: 0, tags: [] }, t); S.templates.push(rec); save(true); return rec; }, run: (id) => runTemplate(id) },
     prefs: () => S.settings.custom,
     setPref: (k, v) => {
-      S.settings.custom[k] = v;
+      /* top-level app settings (mode, theme, amoled, …) go to S.settings; everything else is a
+         customisation pref. `pin` is deliberately excluded — it must go through the hasher. */
+      const TOP = ['mode', 'theme', 'amoled', 'reduceMotion', 'monoNumbers', 'name', 'workCity', 'homeCity', 'demo', 'lockOnOpen', 'autoSync'];
+      if (TOP.includes(k)) S.settings[k] = v; else S.settings.custom[k] = v;
       if (k === 'cycleStart') curYM = currentYM();
       save(true); applyTheme(); renderNav(); rerender(); return v;
     },

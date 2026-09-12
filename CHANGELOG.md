@@ -3,6 +3,15 @@
 All notable changes to RupeeFlow. The build stamp shown in **Settings → About** matches the entries here,
 so you can confirm at a glance which version your phone is running.
 
+## 1.2.1 — 2026-09-12  ·  build `1.2.1+2026-09-12.2`
+
+- **Fixed:** toasts (e.g. “Theme mode: light”, “−₹20 · chai”) never disappeared — they lingered above the
+  bottom bar until something replaced them. The hide was a transform-only slide (`translateY(140%)`) that
+  left the pill ~35px above the bottom of the screen, still fully painted. Now hidden with
+  `opacity:0; visibility:hidden` (plus a larger exit slide), with `transition: none` respected in
+  reduce-motion mode.
+- Added 7 regression tests covering toast show/hide geometry in both short and 2-line forms.
+
 ## 1.2.0 — 2026-09-12  ·  build `1.2.0+2026-09-12.1`
 
 - **In-app updates**: the app now compares its build stamp against the deployed one and shows a
