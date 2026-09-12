@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RupeeFlow — Setup Checker</title>
+<style>
+  :root{
+    --bg:#0b0d14; --surface:#141827; --surface2:#1b2133; --border:#2b3247;
+    --text:#e9eaf2; --muted:#98a0b8; --accent:#6355F5; --accent2:#22D3EE;
+    --pos:#34D399; --warn:#FBBF24; --neg:#F87171;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f4f5fb; --surface:#fff; --surface2:#f0f1f7; --border:#dfe2ee; --text:#151a2b; --muted:#5b6478;
+           --pos:#0E9F6E; --warn:#B45309; --neg:#DC2626; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);line-height:1.5;
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:22px 16px 60px}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+  .logo{width:38px;height:38px;border-radius:13px;display:grid;place-items:center;color:#fff;font-size:19px;
+        background:linear-gradient(135deg,var(--accent),var(--accent2))}
+  h1{font-size:21px;margin:0;letter-spacing:-.3px}
+  .sub{color:var(--muted);font-size:13px;margin:2px 0 18px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:15px 16px;margin-bottom:12px}
+  .card h2{font-size:14.5px;margin:0 0 3px;display:flex;align-items:center;gap:8px}
+  .card h2 .n{width:22px;height:22px;flex:0 0 22px;border-radius:7px;background:var(--surface2);display:grid;place-items:center;
+              font-size:11.5px;font-weight:800;color:var(--muted)}
+  .hint{color:var(--muted);font-size:12.3px;margin:0 0 10px}
+  .badge{font-size:10.5px;font-weight:800;letter-spacing:.35px;text-transform:uppercase;padding:3px 8px;border-radius:999px;
+         background:var(--surface2);color:var(--muted);white-space:nowrap}
+  .badge.run{color:var(--accent2);background:rgba(34,211,238,.14)}
+  .badge.ok{color:var(--pos);background:rgba(52,211,153,.15)}
+  .badge.warn{color:var(--warn);background:rgba(251,191,36,.15)}
+  .badge.bad{color:var(--neg);background:rgba(248,113,113,.15)}
+  .out{margin-top:10px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;
+       white-space:pre-wrap;word-break:break-word;background:var(--surface2);border-radius:10px;padding:10px 11px;display:none}
+  .out.on{display:block}
+  .row{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:10px}
+  button{font:inherit;font-weight:700;font-size:13px;padding:9px 14px;border-radius:11px;cursor:pointer;
+         border:1px solid var(--border);background:var(--surface2);color:var(--text);transition:transform .12s}
+  button:active{transform:scale(.97)}
+  button.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));border-color:transparent;color:#08111A}
+  button:disabled{opacity:.5;pointer-events:none}
+  input{width:100%;font:inherit;font-size:13.5px;padding:10px 12px;border-radius:11px;border:1px solid var(--border);
+        background:var(--surface2);color:var(--text);outline:none}
+  input:focus{border-color:var(--accent)}
+  code{font-family:ui-monospace,Menlo,Consolas,monospace;background:var(--surface2);padding:1px 5px;border-radius:5px;font-size:12px}
+  a{color:var(--accent2)}
+  .kv{display:flex;justify-content:space-between;gap:14px;padding:6px 0;border-bottom:1px dashed var(--border);font-size:12.8px}
+  .kv:last-child{border-bottom:0}
+  .kv span{color:var(--muted)} .kv b{font-weight:700;text-align:right;word-break:break-all}
+  .summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-top:6px}
+  .tile{background:var(--surface2);border-radius:12px;padding:11px 12px;text-align:center}
+  .tile b{display:block;font-size:19px} .tile span{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+  .toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,140%);background:var(--text);color:var(--bg);
+         padding:10px 16px;border-radius:999px;font-size:13px;font-weight:700;transition:transform .3s;z-index:9}
+  .toast.on{transform:translate(-50%,0)}
+  ol{padding-left:18px;margin:8px 0 0;font-size:13px} li{margin-bottom:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">
+    <div class="logo">₹</div>
+    <div>
+      <h1>RupeeFlow — Setup Checker</h1>
+      <div class="sub">Verifies hosting, storage, Google sign-in and Drive/Sheets access, layer by layer.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">i</span> Summary <span class="badge" id="sumBadge" style="margin-left:auto">not run</span></h2>
+    <p class="hint">Run all checks, then use this panel to see what is still missing. Full guide: <code>SETUP.md</code></p>
+    <div class="row"><button class="primary" id="runAll">▶ Run all checks</button>
+      <button id="copyRep">⧉ Copy diagnostic report</button></div>
+    <div class="summary" id="sum"></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">1</span> App files <span class="badge" id="b1" style="margin-left:auto">idle</span></h2>
+    <p class="hint">Are all five files reachable next to this page? (Icons/manifest are only needed for home-screen install.)</p>
+    <button id="run1">Check files</button>
+    <div class="out" id="o1"></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">2</span> Origin &amp; protocol <span class="badge" id="b2" style="margin-left:auto">idle</span></h2>
+    <p class="hint">Google sign-in and home-screen install require <b>HTTPS</b>, or <code>http://localhost</code>. This also prints the exact origin string to paste into Google Cloud.</p>
+    <button id="run2">Check origin</button>
+    <div class="out" id="o2"></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">3</span> Device storage <span class="badge" id="b3" style="margin-left:auto">idle</span></h2>
+    <p class="hint">RupeeFlow saves on-device data in <code>localStorage</code>. Sandboxed frames and some private modes block it — the app then runs in memory-only mode.</p>
+    <button id="run3">Check storage</button>
+    <div class="out" id="o3"></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">4</span> Offline &amp; installability <span class="badge" id="b4" style="margin-left:auto">idle</span></h2>
+    <p class="hint">Uses the service worker (<code>sw.js</code>) so the app opens with no network and can be added to the home screen.</p>
+    <button id="run4">Check PWA support</button>
+    <div class="out" id="o4"></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">5</span> Google sign-in reachability <span class="badge" id="b5" style="margin-left:auto">idle</span></h2>
+    <p class="hint">Loads <code>accounts.google.com/gsi/client</code>. Must succeed for the normal Connect flow.</p>
+    <button id="run5">Check Google script</button>
+    <div class="out" id="o5"></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">6</span> Client ID &amp; sign-in <span class="badge" id="b6" style="margin-left:auto">idle</span></h2>
+    <p class="hint">Paste the Client ID from Google Cloud → Clients. It is validated, then used for a real sign-in.</p>
+    <input id="cid" placeholder="123456789012-abcdefghijklmnop.apps.googleusercontent.com" autocomplete="off">
+    <div class="row"><button id="run6">Validate + sign in</button><button id="offline">I have a token instead</button></div>
+    <div class="out" id="o6"></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">7</span> Drive + Sheets API <span class="badge" id="b7" style="margin-left:auto">idle</span></h2>
+    <p class="hint">With a token: finds or creates the RupeeFlow spreadsheet, writes a test value, reads it back, and lists its tabs.</p>
+    <button id="run7" disabled>Test Drive &amp; Sheets</button>
+    <div class="out" id="o7"></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">?</span> If a check fails</h2>
+    <ol>
+      <li>Open <code>SETUP.md</code> → §11 Troubleshooting and match the exact error text.</li>
+      <li>Most failures are one of: origin not registered (no path / no trailing slash), Sheets or Drive API not enabled, your Gmail not added as a Test user, or the page being inside a sandboxed/in-app browser.</li>
+      <li>Google Cloud changes can take ~5 minutes to take effect — retry after a short wait.</li>
+    </ol>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const state = { token:'', email:'', files:null, origin:null, storage:null, pwa:null, gis:null, cid:null, drive:null };
+const SHEET_TITLE = 'RupeeFlow — Personal Finance (do not rename tabs)';
+const TABS = ['Backup','Transactions','Accounts','Categories','Budgets','Recurring','Goals','Summary'];
+
+function toast(m, ms){ const t=$('#toast'); t.textContent=m; t.classList.add('on'); setTimeout(()=>t.classList.remove('on'), ms||2400); }
+function setBadge(id, kind, label){ const b=$(id); b.className='badge '+(kind||''); b.textContent=label; }
+function out(id, text, cls){ const el=$(id); el.className='out on'+(cls?' '+cls:''); el.textContent=text; }
+function kv(obj){ return Object.entries(obj).map(([k,v])=>`${k.padEnd(20)} ${v}`).join('\n'); }
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+/* ---------- summary panel ---------- */
+const SUMS = [
+  ['files','Files',       '#b1'],
+  ['origin','Origin',     '#b2'],
+  ['storage','Storage',   '#b3'],
+  ['pwa','Offline/PWA',   '#b4'],
+  ['gis','Google JS',     '#b5'],
+  ['cid','Client ID',     '#b6'],
+  ['drive','Drive API',   '#b7']
+];
+function paintSummary(){
+  $('#sum').innerHTML = SUMS.map(([k,label])=>{
+    const v = state[k];
+    const st = !v ? ['—','idle'] : v.ok ? ['PASS','ok'] : v.warn ? ['CHECK','warn'] : ['FAIL','bad'];
+    return `<div class="tile"><b style="color:var(--${st[1]==='ok'?'pos':st[1]==='warn'?'warn':st[1]==='bad'?'neg':'muted'})">${st[0]}</b><span>${label}</span></div>`;
+  }).join('') || '';
+  const done = SUMS.filter(([k])=>state[k]);
+  const bad = SUMS.filter(([k])=>state[k] && !state[k].ok && !state[k].warn).length;
+  const warn = SUMS.filter(([k])=>state[k] && state[k].warn).length;
+  $('#sumBadge').className = 'badge ' + (!done.length ? '' : bad ? 'bad' : warn ? 'warn' : done.length===SUMS.length ? 'ok' : 'run');
+  $('#sumBadge').textContent = !done.length ? 'not run' : bad ? bad+' failing' : warn ? warn+' to review' : done.length===SUMS.length ? 'all good' : done.length+'/'+SUMS.length+' checked';
+}
+
+/* ---------- 1. files ---------- */
+async function check1(){
+  setBadge('#b1','run','running'); 
+  const files = ['index.html','manifest.webmanifest','sw.js','icon-192.png','icon-512.png','setup-check.html'];
+  const res = {};
+  for (const f of files){
+    try {
+      const r = await fetch(f, { method:'GET', cache:'no-store' });
+      res[f] = r.ok ? 'OK ' + r.status : 'HTTP ' + r.status;
+    } catch(e){ res[f] = 'unreachable (' + e.message + ')'; }
+  }
+  const core = ['index.html','manifest.webmanifest','sw.js','icon-192.png','icon-512.png'];
+  const missing = core.filter(f => !/^OK/.test(res[f]));
+  state.files = { ok: !missing.length, warn: missing.length>0, detail: res };
+  setBadge('#b1', missing.length?'bad':'ok', missing.length? missing.length+' missing':'all present');
+  out('#o1', kv(res) + (location.protocol==='file:' ? '\n\nNote: opened from file:// — fetching is restricted in some browsers.\nThe app itself still works; only Drive sync needs a hosted address.' : ''));
+  paintSummary();
+}
+/* ---------- 2. origin ---------- */
+function check2(){
+  setBadge('#b2','run','running');
+  const o = location.origin, host = location.hostname, https = location.protocol === 'https:';
+  const local = host === 'localhost' || host === '127.0.0.1';
+  const fileMode = location.protocol === 'file:';
+  const good = https || local;
+  const info = {
+    'page URL': location.href,
+    'origin': o,
+    'register this in Google Cloud': fileMode ? '— (file:// cannot sync; host the app or use localhost)' : o,
+    'secure context': window.isSecureContext ? 'yes' : 'no',
+    'https': https ? 'yes' : 'no',
+    'localhost': local ? 'yes' : 'no',
+    'service worker allowed': (window.isSecureContext || local) ? 'yes' : 'no'
+  };
+  state.origin = { ok: good, warn: !good, detail: info };
+  if (fileMode){
+    setBadge('#b2','warn','file:// mode');
+    out('#o2', kv(info) + '\n\n⚠ file:// — the app runs fully but CANNOT talk to Google.\n• For local sync testing run:  python3 -m http.server 8080  then open http://localhost:8080\n• For phone use, host it (SETUP.md §4).');
+  } else if (good){
+    setBadge('#b2','ok', https?'https':'localhost');
+    out('#o2', kv(info) + '\n\n✅ Paste the origin above (no path, no trailing slash) into:\n   Google Cloud → Clients → your Web client → Authorised JavaScript origins');
+  } else {
+    setBadge('#b2','bad','not allowed');
+    out('#o2', kv(info) + '\n\n❌ Plain http:// to a non-localhost address is rejected by Google OAuth\n   and prevents home-screen install. Host it over HTTPS (SETUP.md §4).');
+  }
+  paintSummary();
+}
+/* ---------- 3. storage ---------- */
+async function check3(){
+  setBadge('#b3','run','running');
+  const info = {};
+  let ls = true, why = '';
+  try { localStorage.setItem('__rfc','1'); localStorage.removeItem('__rfc'); } catch(e){ ls = false; why = e.name; }
+  let ss = true; try { sessionStorage.setItem('__rfc','1'); sessionStorage.removeItem('__rfc'); } catch(e){ ss = false; }
+  let idb = false; try { idb = !!window.indexedDB; } catch(e){}
+  info['localStorage'] = ls ? 'available' : 'BLOCKED (' + why + ')';
+  info['sessionStorage'] = ss ? 'available' : 'blocked';
+  info['indexedDB'] = idb ? 'available' : 'blocked';
+  info['in sandboxed frame'] = (()=>{ try { return window.self !== window.top ? 'yes' : 'no'; } catch(e){ return 'yes (cross-origin frame)'; } })();
+  try { if (navigator.storage && navigator.storage.estimate){ const q = await navigator.storage.estimate(); info['storage quota'] = Math.round(q.quota/1048576) + ' MB'; } } catch(e){}
+  if (ls){
+    const existing = (()=>{ try { const raw = localStorage.getItem('rupeeflow.v1'); if(!raw) return 'none yet'; const j = JSON.parse(raw); return (j.transactions||[]).length + ' transactions saved'; } catch(e){ return 'unreadable'; } })();
+    info['existing RupeeFlow data'] = existing;
+  }
+  state.storage = { ok: ls, warn: !ls, detail: info };
+  setBadge('#b3', ls?'ok':'warn', ls?'working':'memory-only');
+  out('#o3', kv(info) + (ls ? '\n\n✅ Data will persist between sessions.' : '\n\n⚠ The app will run but forget everything on reload.\nOpening the app directly (not inside a preview frame) usually fixes this.'));
+  paintSummary();
+}
+/* ---------- 4. PWA ---------- */
+async function check4(){
+  setBadge('#b4','run','running');
+  const info = {};
+  info['service worker support'] = ('serviceWorker' in navigator) ? 'yes' : 'no';
+  let reg = null;
+  try { reg = await navigator.serviceWorker.getRegistration(); } catch(e){}
+  info['registered for this scope'] = reg ? (reg.active ? 'active' : reg.installing ? 'installing' : 'registered') : 'not yet (registers on first app load)';
+  info['manifest reachable'] = await fetch('manifest.webmanifest',{cache:'no-store'}).then(r=>r.ok?'yes':'HTTP '+r.status).catch(()=>'unreachable');
+  info['icons'] = await Promise.all(['icon-192.png','icon-512.png'].map(f=>fetch(f,{cache:'no-store'}).then(r=>r.ok?'ok':'HTTP '+r.status).catch(()=>'fail'))).then(a=>a.join(', '));
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  info['already installed (standalone)'] = standalone ? 'yes' : 'no';
+  info['iOS hint'] = /iPhone|iPad/.test(navigator.userAgent) ? 'Share → Add to Home Screen (Safari only)' : 'not iOS';
+  const good = info['service worker support'] === 'yes' && /yes|ok/.test(info['manifest reachable']);
+  state.pwa = { ok: good, warn: !good, detail: info };
+  setBadge('#b4', good?'ok':'warn', good?'installable':'partial');
+  out('#o4', kv(info) + (good ? '\n\n✅ Offline works after the first load. Add to home screen from your browser menu.' : '\n\n⚠ Needs HTTPS (or localhost) and sw.js + manifest.webmanifest next to index.html.'));
+  paintSummary();
+}
+/* ---------- 5. Google script ---------- */
+function loadGIS(){
+  return new Promise((res, rej)=>{
+    if (window.google && window.google.accounts) return res();
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client'; s.async = true; s.defer = true;
+    s.onload = () => res();
+    s.onerror = () => rej(new Error('script blocked or offline'));
+    document.head.appendChild(s);
+    setTimeout(()=>{ (window.google && window.google.accounts) ? res() : rej(new Error('timed out after 12s')); }, 12000);
+  });
+}
+async function check5(){
+  setBadge('#b5','run','loading…');
+  const t0 = performance.now();
+  try {
+    await loadGIS();
+    const ms = Math.round(performance.now() - t0);
+    state.gis = { ok:true, detail: { loaded: 'accounts.google.com/gsi/client in ' + ms + ' ms' } };
+    setBadge('#b5','ok','reachable');
+    out('#o5', kv(state.gis.detail) + '\n\n✅ The normal Connect flow can work from this page.');
+  } catch(e){
+    state.gis = { ok:false, detail:{ loaded:'FAILED — ' + e.message } };
+    setBadge('#b5','bad','blocked');
+    out('#o5', kv(state.gis.detail) + '\n\n❌ Likely offline, or an in-app/sandboxed browser is blocking Google.\nOpen the URL in Chrome/Safari, or use the token fallback (SETUP.md §11).');
+  }
+  paintSummary();
+}
+/* ---------- 6. client id + sign in ---------- */
+function check6(){
+  setBadge('#b6','run','validating');
+  const cid = $('#cid').value.trim() || localStorage.getItem('rf_clientid') || '';
+  const looksRight = /^\d{10,}-[a-z0-9]+\.apps\.googleusercontent\.com$/i.test(cid);
+  const info = {
+    'client id': cid || '(empty)',
+    'format': looksRight ? 'valid' : cid ? 'INVALID — expected <digits>-<random>.apps.googleusercontent.com' : 'paste one to continue',
+    'origin that must be registered': location.origin
+  };
+  state.cid = { ok: looksRight, warn: !looksRight, detail: info };
+  if (!looksRight){ setBadge('#b6','bad','invalid'); out('#o6', kv(info)); paintSummary(); return; }
+  localStorage.setItem('rf_clientid', cid);
+  setBadge('#b6','run','signing in…');
+  loadGIS().then(()=>{
+    const tc = google.accounts.oauth2.initTokenClient({
+      client_id: cid,
+      scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email',
+      callback: async (resp)=>{
+        if (resp.error){ state.cid = { ok:false, detail: info, error: resp.error }; setBadge('#b6','bad','sign-in failed');
+          out('#o6', kv(info) + '\n\n❌ ' + (resp.error_description || resp.error) + '\n\nMost common causes:\n• ' + location.origin + ' is not in Authorised JavaScript origins (add it exactly, no path/trailing slash)\n• your Gmail is not added as a Test user on the OAuth consent screen\n• third-party cookies blocked for this site'); paintSummary(); return; }
+        state.token = resp.access_token;
+        let email = '';
+        try { const u = await fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:'Bearer '+state.token}}).then(r=>r.json()); email = u.email || ''; } catch(e){}
+        state.email = email; state.cid = { ok:true, detail: Object.assign({}, info, { 'signed in as': email || '(email not returned)' }) };
+        setBadge('#b6','ok', email ? 'signed in' : 'token ok');
+        out('#o6', kv(state.cid.detail) + '\n\n✅ Sign-in works. Now run check 7.');
+        $('#run7').disabled = false; paintSummary();
+      }
+    });
+    tc.requestAccessToken({ prompt: 'consent' });
+  }).catch(e=>{
+    setBadge('#b6','bad','google script blocked');
+    out('#o6', kv(info) + '\n\n❌ Could not load the Google sign-in script: ' + e.message);
+    paintSummary();
+  });
+}
+/* ---------- 7. Drive + Sheets ---------- */
+async function gfetch(url, opts){
+  const r = await fetch(url, Object.assign({}, opts, { headers: Object.assign({ Authorization:'Bearer '+state.token }, (opts&&opts.headers)||{}) }));
+  if (!r.ok){ let msg=''; try { const j = await r.json(); msg = (j.error && j.error.message) || ''; } catch(e){}
+    const err = new Error('HTTP ' + r.status + (msg ? ' — ' + msg : '')); err.status = r.status; throw err; }
+  return r.status === 204 ? {} : r.json();
+}
+async function check7(){
+  setBadge('#b7','run','talking to Google…');
+  if (!state.token){ state.drive = { ok:false, detail:{ error:'no token — run check 6 first' } }; setBadge('#b7','bad','no token'); out('#o7','Run check 6 first (or paste a token with the token fallback).'); paintSummary(); return; }
+  const log = [];
+  try {
+    const t0 = performance.now();
+    const q = encodeURIComponent(`mimeType='application/vnd.google-apps.spreadsheet' and trashed=false and name='${SHEET_TITLE}'`);
+    const found = await gfetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)&pageSize=5`);
+    let sid = found.files && found.files[0] && found.files[0].id;
+    log.push('Drive API            OK — searched your Drive');
+    log.push('existing sheet       ' + (sid ? 'found: ' + found.files[0].name + '  (modified ' + found.files[0].modifiedTime + ')' : 'none yet — creating one'));
+    if (!sid){
+      const created = await gfetch('https://sheets.googleapis.com/v4/spreadsheets', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ properties:{ title: SHEET_TITLE, locale:'en_IN' }, sheets: TABS.map(t=>({ properties:{ title:t } })) })
+      });
+      sid = created.spreadsheetId;
+      log.push('Sheets API           OK — spreadsheet created');
+      try {
+        const ss = await gfetch('https://sheets.googleapis.com/v4/spreadsheets/' + sid + '?fields=sheets.properties(title)');
+        const junk = (ss.sheets||[]).filter(s=>!TABS.includes(s.properties.title)).map(s=>s.properties.sheetId);
+        if (junk.length) await gfetch(`https://sheets.googleapis.com/v4/spreadsheets/${sid}:batchUpdate`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ requests: junk.map(id=>({ deleteSheet:{ sheetId:id } })) }) });
+      } catch(e){ log.push('(cleanup of default tab skipped: ' + e.message + ')'); }
+    }
+    const ss = await gfetch('https://sheets.googleapis.com/v4/spreadsheets/' + sid + '?fields=properties(title),sheets.properties(title)');
+    const tabs = (ss.sheets||[]).map(s=>s.properties.title);
+    log.push('tabs                 ' + tabs.join(', '));
+    const ping = new Date().toISOString();
+    await gfetch(`https://sheets.googleapis.com/v4/spreadsheets/${sid}/values/Summary!A20:B20?valueInputOption=RAW`, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ values: [['Setup check', ping]] })
+    });
+    const back = await gfetch(`https://sheets.googleapis.com/v4/spreadsheets/${sid}/values/Summary!A20:B20`);
+    const readBack = (back.values && back.values[0] && back.values[0][1]) || '';
+    log.push('write + read back    ' + (readBack === ping ? 'OK — round-trip verified' : 'MISMATCH (' + readBack + ')'));
+    log.push('sheet URL            https://docs.google.com/spreadsheets/d/' + sid);
+    log.push('total time           ' + Math.round(performance.now()-t0) + ' ms');
+    const ok = readBack === ping;
+    state.drive = { ok, detail: log, sid };
+    setBadge('#b7', ok?'ok':'warn', ok?'round-trip ok':'check output');
+    out('#o7', log.join('\n') + (ok
+      ? '\n\n✅ Drive + Sheets are fully working from this device.\n   The app will now push/pull your data to this spreadsheet.'
+      : '\n\n⚠ Write succeeded but the read-back differed. Retry; if it persists, delete the sheet and re-run.'));
+  } catch(e){
+    const hint = /403/.test(e.message) ? '\n\n403 usually means the API is not enabled for your project:\n   Google Cloud → APIs & Services → Library → enable "Google Sheets API" and "Google Drive API".'
+      : /401/.test(e.message) ? '\n\n401 means the token expired. Run check 6 again.'
+      : /429/.test(e.message) ? '\n\n429 = rate limit. Wait a minute and retry.'
+      : '';
+    state.drive = { ok:false, detail:{ error: e.message } };
+    setBadge('#b7','bad','failed');
+    out('#o7', log.join('\n') + '\n❌ ' + e.message + hint);
+  }
+  paintSummary();
+}
+/* ---------- token fallback ---------- */
+function tokenFallback(){
+  const t = prompt('Paste an OAuth access token (scope: drive.file).\nGet one at developers.google.com/oauthplayground — see SETUP.md §11.');
+  if (!t) return;
+  state.token = t.trim();
+  setBadge('#b6','warn','token pasted');
+  out('#o6','Token accepted (' + state.token.slice(0,12) + '…). Tokens last ~1 hour.\nNow run check 7.');
+  $('#run7').disabled = false; paintSummary();
+}
+/* ---------- report ---------- */
+function report(){
+  const lines = ['RupeeFlow setup report — ' + new Date().toLocaleString(), '='.repeat(52)];
+  for (const [k,label] of SUMS){
+    const v = state[k];
+    lines.push('');
+    lines.push(label.toUpperCase() + ': ' + (!v ? 'not checked' : v.ok ? 'PASS' : v.warn ? 'REVIEW' : 'FAIL'));
+    if (v && v.detail) lines.push(kv(v.detail));
+    if (v && v.error) lines.push('   error: ' + v.error);
+  }
+  lines.push('', 'user agent: ' + navigator.userAgent);
+  return lines.join('\n');
+}
+function copyRep(){
+  const txt = report();
+  const done = () => toast('Diagnostic report copied');
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done).catch(()=>{ alert('Copy this report manually:\n\n' + txt); });
+  else alert('Copy this report manually:\n\n' + txt);
+}
+/* ---------- wire up ---------- */
+$('#run1').onclick = check1;
+$('#run2').onclick = check2;
+$('#run3').onclick = check3;
+$('#run4').onclick = check4;
+$('#run5').onclick = check5;
+$('#run6').onclick = check6;
+$('#run7').onclick = check7;
+$('#offline').onclick = tokenFallback;
+$('#copyRep').onclick = copyRep;
+$('#runAll').onclick = async ()=>{
+  const btn = $('#runAll'); btn.disabled = true; btn.textContent = '▶ Running…';
+  try {
+    await check1(); await check2(); await check3(); await check4(); await check5();
+    const cid = $('#cid').value.trim() || localStorage.getItem('rf_clientid') || '';
+    if (cid) { check6(); await sleep(500); }
+    else { state.cid = { ok:false, warn:true, detail:{ note:'skipped — no Client ID entered (optional until you want Drive sync)' } }; setBadge('#b6','warn','skipped'); paintSummary(); }
+  } finally { btn.disabled = false; btn.textContent = '▶ Run all checks'; }
+};
+paintSummary();
+try { const saved = localStorage.getItem('rf_clientid'); if (saved) $('#cid').value = saved; } catch(e){}
+</script>
+</body>
+</html>
