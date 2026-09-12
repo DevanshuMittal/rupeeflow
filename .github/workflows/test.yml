@@ -1,0 +1,34 @@
+# Full browser test suite — runs on pull requests (and manually) so a broken
+# change never reaches your phone. Node-only checks run on every push (deploy.yml).
+name: Test suite
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  browsers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install Playwright + Chromium
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm i -D playwright@1.47.2
+          npx playwright install --with-deps chromium
+      - name: Serve the app
+        run: |
+          python3 -m http.server 8080 --bind 127.0.0.1 &
+          sleep 2
+      - name: App behaviour (32 tests)
+        run: node tests/qa.js
+      - name: Customisation layer (55 tests)
+        run: node tests/custom.js
+      - name: Update pipeline (10 tests)
+        run: node tests/update.js
+
+      - name: Setup checker (13 tests)
+        run: node tests/setupcheck.js
