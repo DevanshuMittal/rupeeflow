@@ -38,6 +38,8 @@ body{
 /* ---------- themes (palette generated in JS) ---------- */
 html,body{transition:background var(--fast),color var(--fast)}
 .wrap{max-width:var(--maxw);margin:0 auto;min-height:100%;position:relative}
+.homegrid{display:flex;flex-direction:column}
+.hcol{display:contents}
 .screen{display:none;padding:0 var(--pad) calc(var(--nav-h) + 96px)}
 .screen.active{display:block;animation:slideUp var(--spring)}
 @keyframes slideUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -333,6 +335,69 @@ textarea{min-height:64px;resize:vertical}
 .monoall,.monoall *{font-family:var(--mono)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 ::-webkit-scrollbar{width:0;height:0}
+/* ============================================================
+   DESKTOP / LAPTOP LAYOUT  (mobile is untouched above this line)
+   >=1000px: bottom bar becomes a left rail, screens become a wide
+   dashboard grid, bottom sheets become centred dialogs.
+   ============================================================ */
+@media (min-width:1000px){
+  :root{--rail:236px;--appbar-h:63px}
+
+  .nav{top:var(--appbar-h);bottom:0;right:auto;width:var(--rail);border-top:0;
+    border-right:1px solid var(--border);padding:14px 12px 18px;display:flex;flex-direction:column}
+  .nav-in{display:flex;flex-direction:column;align-items:stretch;gap:3px;height:auto;max-width:none;flex:1}
+  .navb{flex-direction:row;justify-content:flex-start;gap:11px;font-size:14px;font-weight:650;
+    padding:11px 12px;border-radius:12px;transition:background var(--fast),color var(--fast)}
+  .navb .i svg{width:19px;height:19px}
+  .navb:hover{background:var(--surface2)}
+  .navb.on{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+  .navb.on .i{transform:none}
+  .navb.on:after{display:none}
+  .fabwrap{order:-1;display:block;margin:2px 0 14px}
+  .fab{width:100%;height:46px;border-radius:14px;font-size:17px;font-weight:750;margin:0;
+    display:flex;align-items:center;justify-content:center;gap:8px}
+  .fab:active{transform:scale(.98)}
+  .fab:after{content:"Add transaction";font-size:14px;font-weight:750}
+
+  .wrap{max-width:none;padding-left:var(--rail)}
+  .appbar-in{max-width:none;padding:10px 30px}
+  .screen{padding:0 30px 56px;max-width:1240px;margin:0 auto}
+
+  .homegrid h1,.homegrid h2,.homegrid h3{margin:0}
+  .homegrid{display:grid;grid-template-columns:minmax(0,1.62fr) minmax(348px,1fr);gap:18px;align-items:start}
+  .hcol{display:block;min-width:0}
+  .hcol-full{grid-column:1/-1}
+  .hcol-a{grid-column:1}
+  .hcol-b{grid-column:2}
+  .hcol-a>.w,.hcol-b>.w{display:block;min-width:0}
+  .hcol-a>.w>.section:first-child,.hcol-b>.w>.section:first-child,
+  .hcol-a>.w>.card:first-child,.hcol-b>.w>.card:first-child{margin-top:0}
+  .hcol>.w+.w>.section,.hcol>.w+.w>.card{margin-top:18px}
+  .w-month>.montnav,.w-month{margin-top:10px}
+  .hero .amt{font-size:38px}
+  .kpis{grid-template-columns:repeat(auto-fit,minmax(158px,1fr))}
+  .tiles{grid-template-columns:repeat(auto-fill,minmax(210px,1fr))}
+  .grid2{gap:16px}
+  .section{margin-top:22px}
+
+  .backdrop{background:rgba(6,8,15,.45)}
+  .sheet{top:calc(var(--appbar-h) + 26px);bottom:auto;left:50%;right:auto;width:min(620px,92vw);
+    max-height:78vh;border-radius:var(--r-xl);border:1px solid var(--border);
+    transform:translate(-50%,14px) scale(.985);opacity:0;pointer-events:none;
+    transition:transform var(--spring),opacity .18s ease}
+  .sheet.on{transform:translate(-50%,0) scale(1);opacity:1;pointer-events:auto}
+  .grab{display:none}
+  .sheet-body{padding-bottom:18px}
+
+  .toast{bottom:28px}
+  #lock{left:var(--rail)}
+  .txrow:hover{background:var(--surface2)}
+  .chips{flex-wrap:wrap;overflow:visible}
+}
+@media (min-width:1500px){
+  .homegrid{grid-template-columns:minmax(0,1.75fr) minmax(400px,1fr)}
+  .screen{max-width:1360px}
+}
 </style>
 </head>
 <body>
@@ -416,9 +481,9 @@ textarea{min-height:64px;resize:vertical}
 <!-- ======================= LOCK ======================= -->
 <div id="lock" class="hide">
   <div>
-    <div style="font-size:34px">🔒</div>
-    <h3 style="margin:8px 0 2px">RupeeFlow is locked</h3>
-    <div class="muted sm">Enter your 4-digit PIN</div>
+    <div style="font-size:34px" id="lockIcon">🔒</div>
+    <h3 style="margin:8px 0 2px" id="lockTitle">RupeeFlow is locked</h3>
+    <div class="muted sm" id="lockSub">Enter your 4-digit PIN</div>
     <div class="pindots" id="pinDots"><i></i><i></i><i></i><i></i></div>
     <div class="pinpad" id="pinPad"></div>
     <button class="btn ghost" id="pinForgot" style="margin-top:16px">Forgot PIN? Unlock with Google Drive</button>
@@ -434,7 +499,7 @@ textarea{min-height:64px;resize:vertical}
 
 /* Bump this on every release — tools/bump.js updates it here and in sw.js.
    The running build is compared against the deployed one to offer in-app updates. */
-const APP_BUILD = '1.3.0+2026-09-12.3';
+const APP_BUILD = '1.4.0+2026-09-12.4';
 
 /* ---------------------------------- 1. utils ------------------------------- */
 const $  = (s, r = document) => r.querySelector(s);
@@ -828,15 +893,43 @@ function seedTransactions() {
 
 /* ---------------------------------- 4. store ------------------------------- */
 const KEY = 'rupeeflow.v1';
-let S = { transactions: [], accounts: [], categories: [], budgets: {}, recurring: [], goals: [], tags: [], settings: { ...DEFAULT_SETTINGS }, meta: { created: Date.now(), updated: Date.now(), rev: 0 } };
+/* ---- profiles: one local dataset per profile, so the real books never appear
+        in the guest/decoy one. 'main' keeps the original storage key so existing
+        installs upgrade silently. ---- */
+const PROFILE_KEY = id => (id === 'main' ? KEY : 'rupeeflow.profile.' + id);
+const PROFILES_KEY = 'rupeeflow.profiles.v1';
+const CURPROF_KEY = 'rupeeflow.current.v1';
+const BOOTPROF_KEY = 'rupeeflow.boot.v1';        /* which profile opens on launch */
+function profiles() {
+  let list = Store.get(PROFILES_KEY, null);
+  if (!Array.isArray(list) || !list.length) {
+    list = [{ id: 'main', name: 'Personal', decoy: false, createdAt: Date.now() }];
+    Store.set(PROFILES_KEY, list);
+  }
+  return list;
+}
+function saveProfiles(list) { Store.set(PROFILES_KEY, list); }
+function profileById(id) { return profiles().find(p => p.id === id) || profiles()[0]; }
+function currentProfileId() { return Store.get(CURPROF_KEY, 'main') || 'main'; }
+function bootProfileId() { return Store.get(BOOTPROF_KEY, '') || ''; }
+function setBootProfileId(id) { id ? Store.set(BOOTPROF_KEY, id) : Store.del(BOOTPROF_KEY); }
+function blankStateObject() {
+  /* a brand-new state object every call — no shared arrays between profiles */
+  return { transactions: [], accounts: DEFAULT_ACCS.map(a => ({ ...a })), categories: DEFAULT_CATS.slice(),
+    budgets: {}, recurring: [], goals: [], tags: [], loans: [], customFields: [], templates: [], rules: [],
+    settings: Object.assign({}, DEFAULT_SETTINGS, { custom: Object.assign({}, DEFAULT_CUSTOM) }),
+    meta: { created: Date.now(), updated: Date.now(), rev: 0 } };
+}
+let S = blankStateObject();
 
 function loadState() {
-  const raw = Store.get(KEY, null);
+  const raw = Store.get(PROFILE_KEY(currentProfileId()), null);
   if (raw && raw.transactions) {
-    S = Object.assign(S, raw);
+    /* start from a blank object so nothing from a previously loaded profile can linger */
+    S = Object.assign(blankStateObject(), raw);
     S.settings = Object.assign({}, DEFAULT_SETTINGS, raw.settings || {});
     S.settings.custom = Object.assign({}, DEFAULT_CUSTOM, (raw.settings && raw.settings.custom) || {});
-    S.meta = Object.assign(S.meta, raw.meta || {});
+    S.meta = Object.assign({ created: Date.now(), updated: Date.now(), rev: 0 }, raw.meta || {});
     upgradeState();
     if (!S.transactions.length && S.settings.demo) freshDemo(false);
     return;
@@ -898,17 +991,20 @@ function freshDemo(first) {
 }
 function blankState() {
   S.transactions = []; S.accounts = DEFAULT_ACCS.slice(0, 3).map(a => ({ ...a, open: 0 })); S.categories = DEFAULT_CATS.map(c => ({ ...c }));
-  S.budgets = { [currentYM()]: {} }; S.recurring = []; S.goals = []; S.tags = []; S.meta = { created: Date.now(), updated: Date.now(), rev: 1 };
+  S.budgets = { [currentYM()]: {} }; S.recurring = []; S.goals = []; S.tags = []; S.loans = [];
+  S.customFields = []; S.templates = []; S.rules = [];
+  S.meta = { created: Date.now(), updated: Date.now(), rev: 1, del: {} };
   S.settings.demo = false; save(true);
 }
 let saveT = null, syncT = null;
 function save(now) {
   S.meta.updated = Date.now(); S.meta.rev = (S.meta.rev || 0) + 1;
   if (window.__rfEmit) window.__rfEmit('save', { rev: S.meta.rev, transactions: S.transactions.length });
-  Store.set(KEY, S);
-  clearTimeout(saveT); saveT = setTimeout(() => { Store.set(KEY, S); }, 400);
+  const PK = PROFILE_KEY(currentProfileId());
+  Store.set(PK, S);
+  clearTimeout(saveT); saveT = setTimeout(() => { Store.set(PK, S); }, 400);
   setSyncState('dirty');
-  if (now) Store.set(KEY, S);
+  if (now) Store.set(PK, S);
   /* never auto-push before this device has reconciled with Drive (syncGuard), and never
      while a merge is running — otherwise a fresh install overwrites the real copy. */
   if (S.settings.autoSync && G.token && !S.settings.syncGuard) {
@@ -1499,11 +1595,20 @@ window.renderHome = function () {
 
   const order = (c.widgetOrder && c.widgetOrder.length ? c.widgetOrder : DEFAULT_CUSTOM.widgetOrder)
     .filter(id => parts[id] && !(c.widgetOff || {})[id]);
+  /* Desktop gets two independent columns (`.hcol`); on mobile the columns are
+     display:contents so this is still one flat list in the user's configured order —
+     the inline `order:` keeps the phone layout exactly as customised. */
+  const SIDE = ['accounts', 'bars', 'insights', 'bills', 'goals', 'quick'];
+  const inA = order.filter(id => !SIDE.includes(id)), inB = order.filter(id => SIDE.includes(id));
+  const wcell = (id, i) => `<div class="w w-${id}" style="order:${i}">${parts[id]}</div>`;
+  const full = (ym !== now ? `<div class="w w-full"><div class="banner" style="margin-top:12px"><span class="e">🕰️</span><div class="grow">You are viewing <b>${esc(periodLabel(ym))}</b>. <button class="btn ghost sm" data-act="thismonth" style="padding:2px 6px">Back to now</button></div></div></div>` : '')
+    + (cycleBanner ? `<div class="w w-full">${cycleBanner}</div>` : '');
   $('#s-home').innerHTML =
-    (ym !== now ? `<div class="banner" style="margin-top:12px"><span class="e">🕰️</span><div class="grow">You are viewing <b>${esc(periodLabel(ym))}</b>. <button class="btn ghost sm" data-act="thismonth" style="padding:2px 6px">Back to now</button></div></div>` : '')
-    + cycleBanner + monthNav(ym)
-    + order.map(id => parts[id]).join('')
-    + '<div style="height:8px"></div>';
+    '<div class="homegrid">'
+    + `<div class="hcol hcol-full w-full">${full}</div>`
+    + `<div class="hcol hcol-a">${`<div class="w w-month">${monthNav(ym)}</div>`}${inA.map((id, i) => wcell(id, i)).join('')}</div>`
+    + `<div class="hcol hcol-b">${inB.map((id, i) => wcell(id, 100 + i)).join('')}</div>`
+    + '</div>';
 };
 /* recurring helpers (shared by home + bills screens) */
 function nextDue(r, from) {
@@ -3109,6 +3214,12 @@ window.renderSettings = function () {
         <label class="switch"><input type="checkbox" id="sHide" ${S.settings.hideBalances ? 'checked' : ''}><span class="slider"></span></label></div>
       ${S.settings.pin ? `<div class="opt-row"><div class="grow"><strong>Remove PIN</strong><span>Turn off the lock screen</span></div>
         <button class="btn sm danger" data-act="clearpin">Remove</button></div>` : ''}
+      <div class="opt-row"><div class="grow"><strong>Profiles on this device</strong>
+        <span>${profiles().length} profile${profiles().length === 1 ? '' : 's'} — sign in to a decoy profile to hide your real data</span></div>
+        <button class="btn sm soft" id="sProfiles" data-act="profiles">Manage</button></div>
+      <div class="opt-row"><div class="grow"><strong>${bootProfileId() ? 'Launch opens ' + esc(profileById(bootProfileId()).name) : 'Open on a decoy at launch'}</strong>
+        <span>${bootProfileId() ? 'Tap to go back to opening your last-used profile' : 'Hand the phone over without exposing your books'}</span></div>
+        <button class="btn sm soft" id="sDecoySet" data-act="decoyboot">${bootProfileId() ? 'Undo' : 'Use decoy'}</button></div>
     </div>
   </div>
   <div class="section"><div class="section-head"><h2>Data</h2></div>
@@ -3138,10 +3249,207 @@ window.renderSettings = function () {
   </div>
   <div style="height:16px"></div>`;
   $('#sLock').onchange = e => { S.settings.lockOnOpen = e.target.checked; save(true); toast(e.target.checked ? 'PIN required at launch' : 'Launch lock off'); };
+  const prBtn = $('#sProfiles'); if (prBtn) prBtn.onclick = () => profilesSheet();
+  const prSet = $('#sDecoySet'); if (prSet) prSet.onclick = () => {
+    const others = profiles().filter(p => p.id !== currentProfileId());
+    if (!others.length) return toast('Create a second profile first');
+    const pick = others.find(o => o.decoy) || others[0];
+    const on = bootProfileId() === pick.id;
+    setBootProfileId(on ? '' : pick.id);
+    toast(on ? 'Launch opens your last profile' : 'Opens on ' + pick.name + ' at launch', 2600);
+    renderSettings();
+  };
   $('#sHide').onchange = e => { S.settings.hideBalances = e.target.checked; save(true); rerender(); };
 };
 /* --------------------------- PIN lock ------------------------------------- */
 function hashPin(p) { let h = 5381; for (const c of 'rf' + p) h = ((h << 5) + h + c.charCodeAt(0)) >>> 0; return h.toString(36); }
+/* ============================================================================
+   Profiles & sign-in
+   ---------------------------------------------------------------------------
+   Two independent local datasets on one device: your real books and a decoy
+   one you can hand to someone else. Each has its own PIN (or none). Switching
+   saves the current profile and loads the target — nothing is copied between
+   them, and the decoy is never signed into Drive.
+   ========================================================================== */
+let pendingProfile = null;      /* profile waiting for a PIN on the lock screen */
+function clientPinHash(cli) { try { return hashPin(cli); } catch (e) { return ''; } }
+function profileHasPin(pr) {
+  const raw = Store.get(PROFILE_KEY(pr.id), null);
+  return !!(raw && raw.settings && raw.settings.pin);
+}
+function switchProfile(id, pin, silent) {
+  const target = profileById(id);
+  const raw = Store.get(PROFILE_KEY(id), null);
+  const wantHash = (raw && raw.settings && raw.settings.pin) || '';
+  if (wantHash && hashPin(String(pin == null ? '' : pin)) !== wantHash) {
+    return { ok: false, error: 'PIN' };
+  }
+  /* flush the outgoing profile before swapping */
+  try { Store.set(PROFILE_KEY(currentProfileId()), S); } catch (e) { }
+  Store.set(CURPROF_KEY, id);
+  if (typeof window.__rfTeardownProfile === 'function') { try { window.__rfTeardownProfile(); } catch (e) { } }
+  loadState();
+  upgradeState();
+  curYM = currentYM();
+  if (target.decoy) { S.settings.autoSync = false; S.settings.syncGuard = true; }
+  applyTheme(); renderNav(); rerender(); setAvatarName();
+  if (typeof renderSettings === 'function' && route === 'settings') renderSettings();
+  if (typeof renderSync === 'function' && route === 'sync') renderSync();
+  if (!silent) toast('Signed in as ' + target.name, 2200);
+  return { ok: true, profile: target };
+}
+function signInPrompt(id) {
+  const pr = profileById(id);
+  if (!profileHasPin(pr)) return switchProfile(id);
+  pendingProfile = id;
+  $('#lockTitle').textContent = 'Unlock ' + pr.name;
+  $('#lockSub').textContent = 'Enter the PIN for this profile';
+  $('#pinForgot').style.display = 'none';
+  pinBuf = ''; lockScreen(true); drawPin();
+}
+function signOutTo(id) {
+  const target = id || profiles().find(p => p.decoy || p.id !== currentProfileId());
+  if (!target) return toast('Only one profile exists');
+  if (profileHasPin(target)) {           /* the decoy's own PIN, if it has one */
+    const raw = Store.get(PROFILE_KEY(target.id), null);
+    if (raw && raw.settings && raw.settings.pin) return signInPrompt(target.id);
+  }
+  return switchProfile(target.id);
+}
+function profilesSheet() {
+  const list = profiles(), cur = currentProfileId();
+  const rows = list.map(pr => {
+    const raw = Store.get(PROFILE_KEY(pr.id), null);
+    const n = raw && raw.transactions ? raw.transactions.length : 0;
+    const on = pr.id === cur;
+    return `<button class="opt-row" data-prof="${pr.id}" style="width:100%;text-align:left;border:0;background:none;cursor:pointer">
+      <div class="av" style="background:${pr.decoy ? hexA('#F97316', .16) : hexA('#6D5EF8', .16)}">${pr.decoy ? '🎭' : '🙂'}</div>
+      <div class="grow"><b>${esc(pr.name)}</b>${on ? ' <span class="tag p">current</span>' : ''}
+        <div class="muted tiny">${n} entries · ${profileHasPin(pr) ? 'PIN protected' : 'no PIN'}</div></div>
+      <span class="tag">${on ? 'open' : 'switch'}</span></button>`;
+  }).join('');
+  openSheet({
+    title: 'Profiles on this device',
+    size: 'tall',
+    body: `${rows}
+    <div class="tiny muted" style="margin-top:12px">
+      Each profile keeps its <b>own separate data</b> in this browser. The decoy profile is never signed
+      into Google Drive, so your real sheet can never appear in it. ${bootProfileId() ? '<br><b>Opens on launch with: ' + esc(profileById(bootProfileId()).name) + '</b>' : ''}
+    </div>`,
+    foot: `<button class="btn soft grow" data-prof-new="1">＋ New profile</button>
+      <button class="btn primary grow" data-x="s">Done</button>`,
+    onMount: b => {
+      $$('[data-prof]', b).forEach(el => el.onclick = () => {
+        const id = el.dataset.prof;
+        closeSheet();
+        if (id === currentProfileId()) return toast('Already using ' + profileById(id).name);
+        signInPrompt(id);
+      });
+      $('[data-prof-new]', b).onclick = () => { closeSheet(); newProfileSheet(); };
+    }
+  });
+}
+function createProfile(name, opts) {
+  opts = opts || {};
+  const id = 'p' + Math.random().toString(36).slice(2, 7);
+  const list = profiles();
+  list.push({ id, name: name || 'Profile', decoy: !!opts.decoy, createdAt: Date.now() });
+  saveProfiles(list);
+  /* a profile starts with its own empty dataset — and its PIN hashed, so switching
+     into it can actually be gated. It gets no Drive credentials of its own. */
+  const blank = blankStateObject();
+  Object.assign(blank.settings, {
+    onboarded: true, demo: false, name: opts.ownerName || '',
+    pin: opts.pin ? hashPin(String(opts.pin)) : '',
+    lockOnOpen: false, clientId: '', email: '', sheetId: '', autoSync: false
+  });
+  blank.v = 2;
+  Store.set(PROFILE_KEY(id), blank);
+  if (opts.seedDemo) seedProfileDemo(id, opts.pin);
+  return id;
+}
+/* fill a profile with the sample dataset, without disturbing whoever is signed in */
+function seedProfileDemo(id, pin) {
+  const keepId = currentProfileId();
+  Store.set(PROFILE_KEY(keepId), S);            /* flush whoever is signed in */
+  Store.set(CURPROF_KEY, id);
+  loadState(); upgradeState();
+  freshDemo(true);
+  if (pin) S.settings.pin = hashPin(String(pin));
+  S.settings.onboarded = true; S.settings.clientId = ''; S.settings.email = ''; S.settings.sheetId = ''; S.settings.autoSync = false;
+  save(true);
+  Store.set(CURPROF_KEY, keepId);
+  loadState(); upgradeState(); curYM = currentYM();   /* reload the original, cleanly */
+}
+function newProfileSheet() {
+  openSheet({
+    title: 'New profile',
+    body: `<div class="field"><label>Name</label><input id="prName" placeholder="e.g. Demo, Work, Guest"></div>
+      <div class="opt-row card" style="border-radius:var(--r-md)"><div class="grow"><strong>Decoy profile</strong>
+        <span>Never connects to Google Drive; useful to hand your phone to someone</span></div>
+        <label class="switch"><input type="checkbox" id="prDecoy" checked><span class="slider"></span></label></div>
+      <div class="field" style="margin-top:12px"><label>PIN (optional, 4 digits)</label>
+        <input id="prPin" inputmode="numeric" maxlength="4" placeholder="leave empty for no PIN"></div>`,
+    foot: `<button class="btn soft grow" data-x="s">Cancel</button><button class="btn primary grow" data-pr-save="1">Create</button>`,
+    onMount: b => {
+      $('[data-pr-save]', b).onclick = () => {
+        const name = ($('#prName').value || '').trim() || 'Profile';
+        const decoy = $('#prDecoy').checked;
+        const pin = ($('#prPin').value || '').trim();
+        if (pin && !/^\d{4}$/.test(pin)) return toast('PIN must be 4 digits');
+        const id = createProfile(name, { decoy, pin, seedDemo: decoy, ownerName: '' });
+        closeSheet();
+        toast(name + ' created' + (decoy ? ' · signed in with sample data' : ''), 2400);
+        if (decoy) signInPrompt(id); else profilesSheet();
+      };
+    }
+  });
+}
+function setAvatarName() {
+  const el = $('#btnAvatar'); if (!el) return;
+  const pr = profileById(currentProfileId());
+  el.textContent = (S.settings.name || pr.name || 'You').trim().slice(0, 1).toUpperCase();
+  el.title = pr.name + (pr.decoy ? ' (decoy profile)' : '');
+}
+function profileMenu() {
+  const pr = profileById(currentProfileId());
+  const others = profiles().filter(p => p.id !== pr.id);
+  const row = (label, sub, attrs, icon, danger) => `<button class="opt-row" ${attrs} style="width:100%;text-align:left;border:0;background:none;cursor:pointer">
+      <div class="av">${icon}</div><div class="grow"><b>${label}</b><div class="muted tiny">${sub}</div></div>
+      <span class="tag ${danger ? 'd' : ''}">›</span></button>`;
+  openSheet({
+    title: 'Signed in',
+    size: 'tall',
+    body: `<div class="card pad" style="margin-bottom:12px">
+        <div class="row"><div class="av" style="background:${pr.decoy ? hexA('#F97316', .16) : hexA('#6D5EF8', .16)}">${pr.decoy ? '🎭' : '🙂'}</div>
+          <div class="grow"><b style="font-size:15px">${esc(pr.name)}</b>
+          <div class="muted tiny">${S.transactions.length} entries · ${pr.decoy ? 'decoy profile · never syncs' : (S.settings.email ? esc(S.settings.email) : 'not connected to Drive')}</div></div>
+          <span class="tag ${pr.decoy ? 'warn' : 'g'}">${pr.decoy ? 'decoy' : 'active'}</span></div>
+      </div>
+      ${row('Profiles &amp; privacy', 'Create, switch or PIN-protect profiles', 'data-pm="manage"', '👥')}
+      ${others.map(o => row('Switch to ' + esc(o.name), 'Sign in with its PIN', `data-pm="go" data-id="${o.id}"`, o.decoy ? '🎭' : '🙂')).join('')}
+      ${others.length ? row('Sign out to ' + esc(others.find(o => o.decoy) ? others.find(o => o.decoy).name : others[0].name),
+        'Quick switch — hides this profile behind another', `data-pm="out"`, '🚪', true) : ''}
+      ${row(bootProfileId() ? 'Stop opening on ' + esc(profileById(bootProfileId()).name) : 'Open on a decoy profile at launch',
+        'Set which profile appears when the app starts', `data-pm="boot"`, '🚀')}`,
+    foot: `<button class="btn soft grow" data-x="s">Close</button>`,
+    onMount: b => {
+      $$('[data-pm]', b).forEach(el => el.onclick = () => {
+        const k = el.dataset.pm;
+        closeSheet();
+        if (k === 'manage') return profilesSheet();
+        if (k === 'go') return signInPrompt(el.dataset.id);
+        if (k === 'out') { const d = profiles().find(p => p.decoy) || profiles().find(p => p.id !== currentProfileId()); return signOutTo(d.id); }
+        if (k === 'boot') {
+          if (bootProfileId()) { setBootProfileId(''); return toast('Launch now opens your last-used profile'); }
+          const target = profiles().find(p => p.id !== currentProfileId()) || pr;
+          setBootProfileId(target.id);
+          return toast('Opens on ' + target.name + ' at launch', 2600);
+        }
+      });
+    }
+  });
+}
 function lockScreen(on) {
   $('#lock').classList.toggle('hide', !on);
   if (on) { pinBuf = ''; drawPin(); }
@@ -3164,8 +3472,19 @@ function drawPin(mode) {
   }
 }
 function tryUnlock() {
+  /* two jobs: unlock this profile, or sign IN to another profile (pendingProfile) */
+  if (pendingProfile) {
+    const r = switchProfile(pendingProfile, pinBuf);
+    if (r.ok) { pendingProfile = null; lockScreen(false); resetLockScreen(); return; }
+    pinBuf = ''; drawPin(); vibrate([20, 40, 20]); return toast('Wrong PIN — try again');
+  }
   if (hashPin(pinBuf) === S.settings.pin) { lockScreen(false); toast('Welcome back, ' + (S.settings.name || '') ); }
   else { pinBuf = ''; drawPin(); vibrate([20, 40, 20]); toast('Wrong PIN — try again'); }
+}
+function resetLockScreen() {
+  $('#lockTitle').textContent = 'RupeeFlow is locked';
+  $('#lockSub').textContent = 'Enter your 4-digit PIN';
+  $('#pinForgot').style.display = '';
 }
 function setPinSheet() {
   promptSheet('Set a 4-digit PIN', 'New PIN', '', (v) => {
@@ -3256,6 +3575,16 @@ document.addEventListener('click', (ev) => {
       S.settings.sheetId = ''; save(true);
       try { await G_.ensure(); await G_.push(false); toast('New sheet created'); rerender(); } catch (e) { toast('Failed: ' + e.message); }
     });
+    case 'profiles': return profilesSheet();
+    case 'decoyboot': {
+      const others = profiles().filter(p => p.id !== currentProfileId());
+      if (!others.length) return toast('Create a second profile first');
+      const pick = others.find(o => o.decoy) || others[0];
+      const on = bootProfileId() === pick.id;
+      setBootProfileId(on ? '' : pick.id);
+      renderSettings();
+      return toast(on ? 'Launch opens your last profile' : 'Opens on ' + pick.name + ' at launch', 2600);
+    }
     case 'setpin': return setPinSheet();
     case 'clearpin': return confirmSheet('Remove PIN?', 'The lock screen will be switched off.', 'Remove', () => { S.settings.pin = ''; S.settings.lockOnOpen = false; save(true); renderSettings(); toast('PIN removed'); });
     case 'saveprofile': S.settings.name = $('#sName').value.trim(); S.settings.workCity = $('#sWork').value.trim() || 'Bengaluru'; S.settings.homeCity = $('#sHome').value.trim() || 'Delhi';
@@ -3395,7 +3724,8 @@ function printReport() {
     .row{display:flex;align-items:center;gap:8px}.grow{flex:1}.right{text-align:right}.muted{color:#666}.tiny{font-size:10.5px}.pos{color:#0E9F6E}.neg{color:#DC2626}
     .num,.mono{font-variant-numeric:tabular-nums}.tag{border:1px solid #ccc;border-radius:6px;padding:1px 5px;font-size:10px}.card{border:0}.av{display:none}
     table{width:100%;border-collapse:collapse}td,th{padding:5px 4px;border-bottom:1px solid #eee;text-align:left;font-size:12px}
-    @media print{body{padding:0}}</style></head><body>${art}
+    @media print{body{padding:0}}
+</style></head><body>${art}
     <p class="tiny muted" style="margin-top:18px">RupeeFlow · generated ${new Date().toLocaleString('en-IN')} · data source: this device + your private Google Sheet</p>
     </body></html>`);
   w.document.close();
@@ -3569,6 +3899,22 @@ function installAPI() {
       save(true); applyTheme(); renderNav(); rerender(); return v;
     },
     /* --- io --- */
+    profiles: {
+      list: () => profiles().map(p => ({ id: p.id, name: p.name, decoy: !!p.decoy, pin: profileHasPin(p), current: p.id === currentProfileId() })),
+      current: () => currentProfileId(),
+      create: (name, opts) => createProfile(name, opts),
+      switch: (id, pin) => switchProfile(id, pin, true),
+      signOut: () => signOutTo(),
+      boot: (id) => { setBootProfileId(id || ''); return bootProfileId(); },
+      remove: (id) => {
+        if (id === 'main') return false;
+        saveProfiles(profiles().filter(p => p.id !== id));
+        Store.del(PROFILE_KEY(id));
+        if (currentProfileId() === id) switchProfile('main', null, true);
+        if (bootProfileId() === id) setBootProfileId('');
+        return true;
+      }
+    },
     sync: (mode) => G_.reconcile(mode || 'manual'),
     deviceId: () => deviceId(),
     export: snapshot,
@@ -3646,6 +3992,13 @@ function watchUpdates(reg) {
    23. INIT
    ========================================================================== */
 function init() {
+  /* if a boot profile is configured (e.g. a decoy), that is what opens — so handing
+     someone the phone never reveals the real books. Its PIN (if any) is asked for below. */
+  const boot = bootProfileId();
+  if (boot && profileById(boot).id === boot && boot !== currentProfileId()) {
+    Store.set(PROFILE_KEY(currentProfileId()), Store.get(PROFILE_KEY(currentProfileId()), null));
+    Store.set(CURPROF_KEY, boot);
+  }
   loadState();
   upgradeState();
   applyTheme();
@@ -3656,13 +4009,13 @@ function init() {
   renderNav();
   $('#btnSearch').onclick = searchSheet;
   $('#btnMode').onclick = () => { const order = ['auto', 'light', 'dark']; S.settings.mode = order[(order.indexOf(S.settings.mode) + 1) % 3]; save(true); applyTheme(); toast('Theme mode: ' + S.settings.mode); rerender(); };
-  $('#btnAvatar').onclick = () => go('more');
+  $('#btnAvatar').onclick = () => profileMenu();
   $('#sheetClose').onclick = closeSheet;
   $('#sheetBack').onclick = backSheet;
   $('#backdrop').onclick = closeSheet;
   $('#brandLogo').onclick = () => go('home');
-  const setAvatar = () => { const el = $('#btnAvatar'); if (el) el.textContent = (S.settings.name || 'You').trim().slice(0, 1).toUpperCase(); };
-  setAvatar(); window._setAvatar = setAvatar;
+  window._setAvatar = setAvatarName;
+  setAvatarName();
   /* lock */
   $('#pinForgot').onclick = async () => {
     if (S.settings.clientId) { try { await G_.connect(S.settings.clientId, true); S.settings.pin = ''; S.settings.lockOnOpen = false; save(true); lockScreen(false); return toast('Verified with Google — PIN removed'); } catch (e) { } }
@@ -3672,6 +4025,8 @@ function init() {
   go(SCREENS.includes(h) ? h : 'home', true);
   if (!S.settings.onboarded) setTimeout(onboarding, 350);
   else if (S.settings.pin && S.settings.lockOnOpen) lockScreen(true);
+  /* a decoy boot profile with no PIN shows its own lock screen if it has one */
+  else if (profileById(currentProfileId()).decoy && !S.settings.pin && S.settings.decoyLock) lockScreen(true);
   /* launch sync: sign in silently with the remembered account, then merge with Drive.
      This is what makes the laptop show the phone's latest data without any tapping. */
   if (S.settings.clientId && S.settings.email && navigator.onLine && !S.settings.noAutoConnect) {
@@ -3709,7 +4064,9 @@ function init() {
   installShortcuts();
   installAPI();
   if (!Store.ok) console.info('RupeeFlow: running in memory-only mode (sandboxed preview). Open the file directly in a browser for persistence.');
-  window._rf = { S, save, go, G_, snapshot, applySnapshot };
+  /* S is rebound whenever a profile is loaded, so expose it as a getter —
+     a captured reference would silently keep pointing at the previous profile. */
+  window._rf = { get S() { return S; }, save, go, G_, snapshot, applySnapshot, get G() { return G; } };
 }
 document.addEventListener('DOMContentLoaded', init);
 

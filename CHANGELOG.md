@@ -3,6 +3,25 @@
 All notable changes to RupeeFlow. The build stamp shown in **Settings → About** matches the entries here,
 so you can confirm at a glance which version your phone is running.
 
+## 1.4.0 — 2026-09-12  ·  build `1.4.0+2026-09-12.4`
+
+- **Laptop layout.** From 1000px wide the app stops being a stretched phone: the bottom bar becomes a
+  left rail with labelled nav, the dashboard becomes a two-column grid with a wider hero and KPI row,
+  tables use the full width, and bottom sheets turn into centred dialogs. The phone layout is untouched —
+  it is the same markup with `.hcol` collapsing to `display:contents` and the custom widget order
+  preserved by inline `order`.
+- **Profile login / logout + decoy mode.** Tap the avatar to switch between profiles: each is a fully
+  separate local dataset with its own optional 4-digit PIN. Create a decoy profile and you can hand your
+  phone over showing plausible sample data — the decoy carries no Google credentials, cannot write to your
+  sheet, and can be configured to open at launch. Your real profile is untouched and stays PIN-protected.
+- **Fixed a state-leak bug** found while testing the above: `loadState()` merged saved data into the live
+  state object, so a profile switch could carry entries from the previous profile. It now rebuilds state
+  from a blank object, and `window._rf.S` is a getter (it used to hand out a stale reference after a switch).
+- New suites: `tests/profiles.js` (33 tests — proves the decoy never leaks real data, gates on PIN, keeps
+  its data across reloads, and writes nothing to Drive; includes a negative control) and `tests/desktop.js`
+  (23 tests — the laptop rail/grid/dialog layout on 15 routes plus the 999→1001px breakpoint, and that the
+  phone layout and custom widget order are unchanged).
+
 ## 1.3.0 — 2026-09-12  ·  build `1.3.0+2026-09-12.3`
 
 - **Phone + laptop on one Google account.** Connecting a second device used to *overwrite* the sheet
