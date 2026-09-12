@@ -1,0 +1,50 @@
+# Deploys RupeeFlow to GitHub Pages on every push to main.
+# Nothing to build — it is a static site — but CI must pass first.
+name: Deploy RupeeFlow to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:        # lets you hit "Run workflow" in the Actions tab
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Validate app integrity
+        run: node tests/ci-check.js
+
+  deploy:
+    needs: validate
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare site
+        run: |
+          mkdir -p _site
+          cp index.html setup-check.html manifest.webmanifest sw.js icon-192.png icon-512.png _site/
+          cp README.md SETUP.md CUSTOMIZE.md GITHUB.md CHANGELOG.md _site/ 2>/dev/null || true
+          # keep the docs out of the app's own scope clutter but available for download
+          touch _site/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
