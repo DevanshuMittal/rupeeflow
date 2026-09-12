@@ -1,0 +1,31 @@
+const { chromium } = require('/home/user/.tools/node_modules/playwright');
+const fs = require('fs');
+const OUT = '/tmp/show'; fs.mkdirSync(OUT, { recursive: true });
+(async () => {
+  const b = await chromium.launch({ args: ['--no-sandbox'] });
+  const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+  const p = await ctx.newPage(); p.setDefaultTimeout(12000);
+  p.on('pageerror', e => console.log('[PAGEERROR]', e.message));
+  await p.goto('http://localhost:8080/index.html'); await p.waitForTimeout(800);
+  if (await p.$('[data-ob=skip]')) { await p.click('[data-ob=skip]'); await p.waitForTimeout(500); }
+  const S = async (n) => { await p.waitForTimeout(350); await p.screenshot({ path: `${OUT}/${n}.png` }); };
+  await S('a_home_top');
+  await p.evaluate(() => window.scrollTo(0, 640)); await S('b_home_mid');
+  await p.evaluate(() => window.scrollTo(0, 1500)); await S('c_home_low');
+  await p.click('.navb[data-nav=records]'); await S('d_records');
+  await p.click('.navb[data-nav=analytics]'); await p.evaluate(()=>window.scrollTo(0,0)); await S('e_analytics');
+  await p.click('#s-analytics [data-an=cal]'); await S('f_calendar');
+  await p.click('.navb[data-nav=more]'); await S('g_more');
+  await p.click('#s-more .tile[data-nav=budgets]'); await S('h_budgets');
+  await p.click('.screen.active [data-act=back]');
+  await p.click('#s-more .tile[data-nav=loans]'); await S('i_loans');
+  await p.click('.screen.active [data-act=back]');
+  await p.click('#s-more .tile[data-nav=themes]'); await S('j_themes');
+  await p.click('#s-themes [data-mode=dark]'); await p.click('#s-themes [data-theme=amoled]'); await p.waitForTimeout(400); await S('k_themes_amoled');
+  await p.click('.navb[data-nav=home]'); await p.evaluate(()=>window.scrollTo(0,0)); await S('l_home_amoled');
+  await p.click('.navb[data-nav=more]'); await p.click('#s-more .tile[data-nav=sync]'); await S('m_sync');
+  await p.click('.navb[data-nav=home]');
+  await p.click('.fab'); await p.waitForTimeout(400); await S('n_add');
+  await p.click('[data-t=transfer]'); await p.waitForTimeout(300); await S('o_add_transfer');
+  await b.close();
+})();
