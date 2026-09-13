@@ -499,7 +499,7 @@ textarea{min-height:64px;resize:vertical}
 
 /* Bump this on every release — tools/bump.js updates it here and in sw.js.
    The running build is compared against the deployed one to offer in-app updates. */
-const APP_BUILD = '1.4.0+2026-09-12.4';
+const APP_BUILD = '1.4.2+2026-09-13.1';
 
 /* ---------------------------------- 1. utils ------------------------------- */
 const $  = (s, r = document) => r.querySelector(s);
@@ -829,18 +829,30 @@ function seedTransactions() {
   const rint = (a, b) => Math.round(a + rnd() * (b - a));
   const out = []; const today = new Date();
   const yr = today.getFullYear(), mo = today.getMonth(), day = today.getDate();
+  /* Seeded times are fixed clock times, so on "today" they could land *after* the current
+     time — the demo would show dinner before you've had lunch. Pull any such entry back to
+     just before now instead. */
+  const nowHM = String(new Date().getHours()).padStart(2, '0') + ':' + String(new Date().getMinutes()).padStart(2, '0');
+  let pulledBack = 0;
+  const clampTime = (date, t) => {
+    if (date !== todayISO() || t <= nowHM) return t;
+    pulledBack++;
+    const back = pulledBack * 7;                       /* spread them so they keep an order */
+    const mins = Math.max(1, new Date().getHours() * 60 + new Date().getMinutes() - back);
+    return String(Math.floor(mins / 60)).padStart(2, '0') + ':' + String(mins % 60).padStart(2, '0');
+  };
   const push = (d, type, amount, cat, acc, note, tags, when) => {
     if (d > 31) return;
     const mm = String(mo + 1).padStart(2, '0'), dd = String(d).padStart(2, '0');
     const date = `${yr}-${mm}-${dd}`; if (date > todayISO()) return;
-    out.push({ id: uid('t'), type, amount: round2(amount), cat, acc, to: null, date, time: when || '10:30', note, tags: tags || [], reimb: 0, created: Date.now(), updated: Date.now() });
+    out.push({ id: uid('t'), type, amount: round2(amount), cat, acc, to: null, date, time: clampTime(date, when || '10:30'), note, tags: tags || [], reimb: 0, created: Date.now(), updated: Date.now() });
   };
   const bgDays = [2, 5, 7, 9, 12, 15, 18, 22, 25, 28]; // swiggy/zomato days
   for (const m of [0, 1, 2, 3, 4, 5]) {
     const ref = new Date(yr, mo - m, 1); const Y = ref.getFullYear(), M = ref.getMonth() + 1;
     const isCur = m === 0; const maxD = isCur ? day : new Date(Y, M, 0).getDate();
     const at = (d) => `${Y}-${String(M).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    const maybe = (d, ...args) => { if (d <= maxD) out.push(Object.assign({ id: uid('t'), to: null, time: '11:15', tags: [], reimb: 0, created: Date.now(), updated: Date.now() }, { date: at(d) }, ...args)); };
+    const maybe = (d, ...args) => { if (d <= maxD) out.push(Object.assign({ id: uid('t'), to: null, tags: [], reimb: 0, created: Date.now(), updated: Date.now() }, { date: at(d), time: clampTime(at(d), '11:15') }, ...args)); };
     /* fixed, salary-cycle stuff */
     maybe(1, { type: 'income', amount: 145000, cat: 'i_sal', acc: 'a_sal', note: 'Monthly salary credit', tags: ['salary'] });
     maybe(3, { type: 'expense', amount: 24000, cat: 'c_rent', acc: 'a_sal', note: 'Indiranagar 2BHK rent', tags: ['fixed', 'rent'] });
@@ -2675,7 +2687,8 @@ const TABS = ['Backup', 'Transactions', 'Accounts', 'Categories', 'Budgets', 'Re
 function setSyncState(s, msg) { G.status = s; if (msg) G.msg = msg; paintsync(); }
 function paintsync() {
   const el = $('#syncPill'); if (!el) return;
-  const map = { off: ['☁️', 'Local only', 'muted'], dirty: ['🕒', 'Unsaved to Drive', 'warn'], syncing: ['🔄', 'Syncing…', 'p'], synced: ['✅', 'Synced ' + timeAgo(S.settings.lastSync), 'g'], error: ['⚠️', G.msg || 'Sync error', 'd'] };
+  /* keep the pill short — a raw API error is 40+ characters and wraps across the card */
+  const map = { off: ['☁️', 'Local only', 'muted'], dirty: ['🕒', 'Unsaved to Drive', 'warn'], syncing: ['🔄', 'Syncing…', 'p'], synced: ['✅', 'Synced ' + timeAgo(S.settings.lastSync), 'g'], error: ['⚠️', 'Needs attention', 'd'] };
   const [e, t, cls] = map[G.status] || map.off;
   el.className = 'tag ' + cls; el.textContent = e + ' ' + t;
 }
@@ -2697,7 +2710,128 @@ async function gfetch(url, opts = {}) {
   if (!r.ok) { let t = ''; try { t = (await r.json()).error.message; } catch (e) { } throw new Error(t || ('HTTP ' + r.status)); }
   return r.status === 204 ? {} : r.json();
 }
+/* Google's OAuth errors are famously cryptic. Turn the common ones into a fix the
+   user can actually follow — the 403 access_denied case is nearly always an
+   unpublished ("Testing") consent screen with no test user added. */
+/* Google's Sheets/Drive errors are shouted in caps but say little. Map the recurring
+   ones to something a person can act on, and keep the raw text available underneath. */
+function apiFriendly(e) {
+  const m = (((e && e.message) || '') + '').toLowerCase();
+  if (/unsupported locale|invalid properties/.test(m))
+    return { title: 'Google rejected a spreadsheet setting', body: 'This was a bug in older RupeeFlow builds (it sent an unsupported sheet locale). Update the app — it no longer sends one — then tap \u201cSync now (merge)\u201d. Your data is untouched.', raw: e.message };
+  if (/storage quota|exceeded.*storage|no space|drive.*full/.test(m))
+    return { title: 'Your Google Drive is full', body: 'Free up space in Google Drive (a RupeeFlow sheet is only a few hundred KB), then retry.', raw: e.message };
+  if (/quota|rate limit|429|too many/.test(m))
+    return { title: 'Google is rate-limiting requests', body: 'Wait about a minute, then tap \u201cSync now (merge)\u201d. Nothing is lost — changes stay on this device meanwhile.', raw: e.message };
+  if (/insufficient|permission|forbidden|403/.test(m) && !/auth/.test(m))
+    return { title: 'The sheet isn\u2019t reachable with this permission', body: 'RupeeFlow asks only for access to spreadsheets it created itself. Disconnect and reconnect, accepting every permission Google lists.', raw: e.message };
+  if (m.includes('auth'))
+    return { title: 'Your Google session expired', body: 'Tap \u201cReconnect Google account\u201d to sign in again — takes a second.', raw: e.message };
+  if (/not found|404/.test(m))
+    return { title: 'The linked spreadsheet is missing', body: 'It may have been deleted or emptied from your Drive. Tap \u201cCreate fresh sheet\u201d under Advanced to start a new one, or Disconnect and reconnect.', raw: e.message };
+  return { title: 'Sync problem', body: 'Tap \u201cSync now (merge)\u201d to retry. If it keeps failing, Disconnect and reconnect Google.', raw: e.message };
+}
+function apiHelpSheet(e) {
+  const f = apiFriendly(e);
+  openSheet({
+    title: f.title,
+    body: `<div class="tiny" style="line-height:1.7">${esc(f.body)}</div>
+      <div class="sep"></div>
+      <div class="tiny muted">What Google said</div>
+      <div class="mono tiny" style="margin-top:4px;word-break:break-word;background:var(--surface2);padding:8px 10px;border-radius:var(--r-sm)">${esc(f.raw || 'unknown error')}</div>`,
+    foot: `<button class="btn soft grow" data-api-retry="1">Try again</button><button class="btn primary grow" data-x="s">Close</button>`,
+    onMount: b => {
+      const r = $('[data-api-retry]', b);
+      if (r) r.onclick = () => { closeSheet(); setTimeout(() => G_.reconcile('manual'), 150); };
+    }
+  });
+}
+function oauthFault(e) {
+  const m = (((e && e.message) || '') + ' ' + ((e && e.code) || '')).toLowerCase();
+  if (m.includes('access_denied') || m.includes('403')) return 'denied';
+  if (m.includes('origin_mismatch') || m.includes('400')) return 'origin';
+  if (m.includes('idpiframe') || m.includes('third-party') || m.includes('cookie')) return 'cookies';
+  if (m.includes('popup') || m.includes('blocked')) return 'popup';
+  if (m.includes('timed out') || m.includes('did not complete')) return 'silent';
+  return '';
+}
+function oauthHelpSheet(fault) {
+  const CLOUD = 'https://console.cloud.google.com/apis/credentials/consent';
+  const openCloud = `<button class="btn soft sm block" style="margin-top:10px" onclick="window.open('${CLOUD}','_blank','noopener')">Open Google Cloud consent screen ↗</button>`;
+  const pages = {
+    denied: {
+      title: 'Google refused the sign-in (403)',
+      sub: 'Error 403: access_denied',
+      body: `<b>Nothing is wrong with RupeeFlow — your Google Cloud app is simply not published yet.</b>
+        <div class="tiny muted" style="margin:8px 0 12px">While an OAuth app sits in <b>Testing</b>, only accounts you
+        explicitly list may authorise it. Your account is not on that list, so Google refuses.</div>
+        <ol style="margin:0;padding-left:18px;font-size:13.2px;line-height:1.7">
+          <li>Open the <b>Google Auth Platform</b> (or APIs &amp; Services → <b>OAuth consent screen</b>).</li>
+          <li>Go to <b>Audience</b> → <b>Test users</b> → <b>＋ Add users</b>.</li>
+          <li>Add the <b>exact Google account</b> you sign in with (e.g. <code>you@gmail.com</code>) → <b>Save</b>.</li>
+          <li>Come back and tap <b>Connect</b> again. Add the same account on every device you use.</li>
+        </ol>
+        <div class="sep"></div>
+        <b>Better: publish the app</b> (once)
+        <div class="tiny muted" style="margin:6px 0 0">Audience → <b>Publish app</b>. Then <i>any</i> account works and
+        you won't be asked again every 7 days (Testing-mode grants expire weekly). With the
+        <code>drive.file</code> scope you don't need Google's verification — you'll just see an
+        “unverified app” warning once: <b>Advanced → Go to RupeeFlow (unsafe)</b>.</div>
+        ${openCloud}`,
+      foot: `<button class="btn soft grow" data-oauth-retry="1">Try again</button><button class="btn primary grow" data-x="s">Got it</button>`
+    },
+    origin: {
+      title: 'Wrong address registered',
+      sub: 'origin_mismatch',
+      body: `<div class="tiny" style="line-height:1.7">Your Client ID must list the <b>exact origin</b> you are using:
+        no path, no trailing slash, matching scheme.<br><br>
+        <code>${esc(location.origin)}</code><br><br>
+        Google Cloud → Clients → your client → <b>Authorised JavaScript origins</b> → add the line above →
+        Save, wait ~5 minutes, retry.</div>${openCloud}`,
+      foot: `<button class="btn soft grow" data-oauth-retry="1">Try again</button><button class="btn primary grow" data-x="s">Got it</button>`
+    },
+    cookies: {
+      title: 'Sign-in is being blocked',
+      sub: 'third-party cookies or an in-app browser',
+      body: `<div class="tiny" style="line-height:1.7">Google sign-in needs third-party cookies for this site, or a
+        real browser. In a <b>stored cookie notice</b>, allow cookies for accounts.google.com. In an in-app browser
+        (Instagram, Gmail preview…) open the site in <b>Chrome / Safari</b> instead — or use
+        <b>Advanced → Use an existing access token</b> on the Drive sync screen.</div>${openCloud}`,
+      foot: `<button class="btn soft grow" data-oauth-retry="1">Try again</button><button class="btn primary grow" data-x="s">Got it</button>`
+    },
+    popup: {
+      title: 'The sign-in window was blocked',
+      sub: 'popup blocked',
+      body: `<div class="tiny" style="line-height:1.7">Allow pop-ups for this site and tap Connect again.
+        On iOS Safari, check <b>Settings → Safari → Block Pop-ups</b>.</div>${openCloud}`,
+      foot: `<button class="btn soft grow" data-oauth-retry="1">Try again</button><button class="btn primary grow" data-x="s">Got it</button>`
+    },
+    silent: {
+      title: 'Google didn’t finish the sign-in',
+      sub: 'no response',
+      body: `<div class="tiny" style="line-height:1.7">The sign-in window closed or showed an error page before handing
+        back a token. The usual causes:<br><br>
+        • <b>Error 403: access_denied</b> — your account isn't a <b>test user</b> of the Cloud app (Audience → Test users),
+        or the app isn't published.<br>
+        • The window was closed early — tap Connect and finish the flow.<br>
+        • Pop-ups blocked for this site.<br><br>
+        If you saw a Google error page, that first one is almost certainly it.</div>${openCloud}`,
+      foot: `<button class="btn soft grow" data-oauth-retry="1">Try again</button><button class="btn primary grow" data-x="s">Got it</button>`
+    }
+  };
+  const pg = pages[fault] || pages.silent;
+  openSheet({
+    title: pg.title,
+    body: `<div class="banner dng" style="margin-bottom:12px"><span class="e">⚠️</span><div>
+        <b>${esc(pg.sub)}</b><div class="tiny muted">This comes from Google, not from RupeeFlow.</div></div></div>${pg.body}`,
+    foot: pg.foot,
+    onMount: b => {
+      const r = $('[data-oauth-retry]', b); if (r) r.onclick = () => { closeSheet(); setTimeout(() => { const btn = document.querySelector('[data-act=connect]'); if (btn) btn.click(); }, 120); };
+    }
+  });
+}
 const G_ = {
+  connectTimeout: 25000,        /* no callback from Google within this long → explain what usually causes it */
   async connect(clientId, silent) {
     await loadGIS();
     if (!clientId) throw new Error('Add your Google OAuth Client ID first');
@@ -2706,7 +2840,12 @@ const G_ = {
       G.tokenClient = google.accounts.oauth2.initTokenClient({
         client_id: clientId, scope: G.scopes, prompt: silent ? '' : 'consent',
         callback: async (resp) => {
-          if (resp.error) return rej(new Error(resp.error_description || resp.error));
+          clearTimeout(timer);
+          if (resp.error) {
+            const err = new Error(resp.error_description || resp.error);
+            err.code = resp.error;
+            return rej(err);
+          }
           G.token = resp.access_token; G.exp = Date.now() + (+resp.expires_in || 3600) * 1000;
           try {
             const u = await gfetch('https://www.googleapis.com/oauth2/v3/userinfo');
@@ -2715,6 +2854,9 @@ const G_ = {
           setSyncState('off'); save(true); res(true);
         }
       });
+      /* Google renders its refusal as an error page in the popup and never calls us back,
+         so arm a timer: silence is itself a diagnosis worth showing. */
+      const timer = setTimeout(() => { if (!G.token) { const e = new Error('did not complete'); e.code = 'silent'; rej(e); } }, G_.connectTimeout);
       G.tokenClient.requestAccessToken({ prompt: silent ? '' : 'consent' });
     });
   },
@@ -2739,10 +2881,26 @@ const G_ = {
     if (found.files && found.files.length) {
       S.settings.sheetId = found.files[0].id; S.settings.sheetName = found.files[0].name; save(true); return S.settings.sheetId;
     }
-    const created = await gfetch('https://sheets.googleapis.com/v4/spreadsheets', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ properties: { title: SHEET_TITLE, locale: 'en_IN' }, sheets: TABS.map(t => ({ properties: { title: t } })) })
-    });
+    /* No `locale` on purpose. The Sheets API only accepts the locales it supports
+       (`en`, `en_US`, …) and rejects anything else with INVALID_PROPERTIES, which fails the
+       whole create — `en_IN` is not one of them, even though the Sheets UI offers India.
+       RupeeFlow writes RAW values and formats the currency itself, so the sheet's locale has
+       no effect on the data; letting Google default it to your account's locale is both
+       safer and more correct. */
+    let created;
+    try {
+      created = await gfetch('https://sheets.googleapis.com/v4/spreadsheets', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ properties: { title: SHEET_TITLE }, sheets: TABS.map(t => ({ properties: { title: t } })) })
+      });
+    } catch (e1) {
+      if (!/invalid properties|unsupported locale/i.test(e1.message || '')) throw e1;
+      /* last resort: bare spreadsheet, tabs added afterwards */
+      created = await gfetch('https://sheets.googleapis.com/v4/spreadsheets', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ properties: { title: SHEET_TITLE } })
+      });
+    }
     S.settings.sheetId = created.spreadsheetId; S.settings.sheetName = SHEET_TITLE; save(true);
     try { /* tidy up the default Sheet1 if Google added one */
       const ss = await gfetch('https://sheets.googleapis.com/v4/spreadsheets/' + created.spreadsheetId + '?fields=sheets.properties');
@@ -2811,10 +2969,12 @@ const G_ = {
       G.busy = false; save(true);
       setSyncState('synced'); if (!silent) toast('Saved to Google Drive (' + S.transactions.length + ' entries)');
       rerender();
+      return { ok: true, rev: newRev, count: S.transactions.length };
     } catch (e) {
       if (e.message === 'AUTH') { setSyncState('error', 'Session expired — reconnect'); }
       else setSyncState('error', e.message);
       if (!silent) toast('Sync failed: ' + e.message);
+      return { ok: false, error: e.message };
     } finally { G.busy = false; }
   },
   /* Reconcile = the one sync operation: read Drive, merge, publish. Never overwrites blind.
@@ -2831,10 +2991,17 @@ const G_ = {
       if (remote && probe.rev) { remote.meta = Object.assign({}, remote.meta || {}, { rev: probe.rev }); }
       S.settings.seenRev = Math.max(+S.settings.seenRev || 0, probe.rev);
       if (!remote || !remote.transactions) {
-        /* Drive is empty — this device seeds it */
-        S.settings.syncGuard = false; save(true);
+        /* Drive is empty — this device seeds it. Do NOT lift the guard until the
+           spreadsheet actually exists: a failed setup must stay visibly broken. */
         G.busy = false;
-        await G_.push(true);
+        const pub = await G_.push(true);
+        if (pub && pub.ok === false) {
+          setSyncState('error', pub.error);
+          if (mode !== 'open') toast('Sync failed: ' + pub.error, 3600);
+          return { error: pub.error };
+        }
+        S.settings.syncGuard = false; save(true);
+        setSyncState('synced');
         if (mode === 'connect') toast('Backed up to your Google Sheet');
         return { dir: 'seed' };
       }
@@ -2854,7 +3021,12 @@ const G_ = {
       if (changed) { stashLocal(); applySnapshot(merged); }
       S.settings.syncGuard = false; save(true);
       G.busy = false;
-      await G_.push(true);                        /* publish the merged result */
+      const pub = await G_.push(true);            /* publish the merged result */
+      if (pub && pub.ok === false) {
+        setSyncState('error', pub.error);
+        if (mode !== 'open') toast('Sync failed: ' + pub.error, 3600);
+        return { error: pub.error, dir: 'merge' };
+      }
       setSyncState('synced');
       const gained = Math.max(0, S.transactions.length - localHad);
       if (mode === 'manual') toast(changed ? (gained ? 'Merged ' + gained + ' new entr' + (gained === 1 ? 'y' : 'ies') + ' from Drive' : 'Synced both ways') : 'Already up to date', 2400);
@@ -3026,6 +3198,12 @@ window.renderSync = function () {
     <div class="kv"><span>Stored on this phone</span><b>${Store.ok ? 'browser storage' : 'memory only (preview mode)'}</b></div>
     ${sid ? `<div class="kv"><span>Sheet</span><b><a href="https://docs.google.com/spreadsheets/d/${sid}" target="_blank" rel="noopener">Open in Drive ↗</a></b></div>` : ''}
   </div>
+  ${G.status === 'error' ? (() => { const f = apiFriendly({ message: G.msg }); return `<div class="banner dng" style="margin-top:12px;align-items:flex-start">
+      <span class="e">⚠️</span>
+      <div class="grow"><b>${esc(f.title)}</b>
+        <div class="tiny" style="margin-top:3px;line-height:1.6">${esc(f.body)}</div>
+        <button class="btn soft sm" style="margin-top:8px" data-act="apierrhelp">What does this mean?</button></div>
+    </div>`; })() : ''}
 
   <div class="actionsrow" style="margin-top:12px">
     ${G.ready ? `<button class="btn soft" data-act="disconnect">Disconnect</button>
@@ -3065,6 +3243,9 @@ window.renderSync = function () {
         <li>Click <b>Create credentials → OAuth client ID → Web application</b>.</li>
         <li>Under <b>Authorised JavaScript origins</b> add the address where this app is hosted — just the origin, e.g. <code>https://yourname.github.io</code> (no trailing slash, no path). <b>One origin covers phone and laptop</b> when both open the same URL.</li>
         <li>Enable the <b>Google Sheets API</b> and <b>Google Drive API</b> for the project (APIs &amp; Services → Library).</li>
+        <li><b>Give the app permission to sign you in:</b> on the OAuth consent screen go to <b>Audience</b> and either
+          add your Google account under <b>Test users</b>, or press <b>Publish app</b>. Skipping this is the cause of
+          <b>Error 403: access_denied</b> when you connect.</li>
         <li>Copy the Client ID (ends with <code>.apps.googleusercontent.com</code>) and paste it below, then connect.</li>
       </ol>
       <div class="field" style="margin-top:14px"><label>Google OAuth Client ID</label>
@@ -3557,8 +3738,17 @@ document.addEventListener('click', (ev) => {
       S.settings.syncGuard = true; save(true);      /* block auto-push until we have merged */
       return G_.connect(cid)
         .then(() => { toast('Connected — checking Google Drive', 2000); return G_.reconcile('connect'); })
-        .then(r => { if (r && r.dir === 'seed') toast('This device is now the master copy'); renderSync(); })
-        .catch(e => toast('Could not connect: ' + e.message));
+        .then(r => {
+          if (r && r.error) { renderSync(); return; }          /* the error card explains itself */
+          if (r && r.dir === 'seed') toast('This device is now the master copy');
+          renderSync();
+        })
+        .catch(e => {
+          S.settings.syncGuard = false; save(true);
+          const fault = oauthFault(e);
+          if (fault) return oauthHelpSheet(fault);
+          toast('Could not connect: ' + e.message, 3600);
+        });
     }
     case 'disconnect': return confirmSheet('Disconnect Google?', 'Local data stays on this phone and in your sheet. You can reconnect any time.', 'Disconnect', () => {
       G.token = ''; G.userEmail = ''; S.settings.sheetId = ''; save(true); setSyncState('off'); renderSync(); toast('Disconnected');
@@ -3575,6 +3765,7 @@ document.addEventListener('click', (ev) => {
       S.settings.sheetId = ''; save(true);
       try { await G_.ensure(); await G_.push(false); toast('New sheet created'); rerender(); } catch (e) { toast('Failed: ' + e.message); }
     });
+    case 'apierrhelp': return apiHelpSheet({ message: G.msg });
     case 'profiles': return profilesSheet();
     case 'decoyboot': {
       const others = profiles().filter(p => p.id !== currentProfileId());
@@ -3916,6 +4107,14 @@ function installAPI() {
       }
     },
     sync: (mode) => G_.reconcile(mode || 'manual'),
+    /* one obvious place to read sync state — G_ is the API, G holds the status, which
+       was easy to get wrong from outside (and from tests). */
+    status: () => ({
+      status: G.status, message: G.msg, busy: !!G.busy, connected: !!G.ready,
+      email: G.userEmail || S.settings.email || '', sheetId: S.settings.sheetId || '',
+      lastSync: S.settings.lastSync || 0, lastDir: S.settings.lastSyncDir || '',
+      seenRev: +S.settings.seenRev || 0, guard: !!S.settings.syncGuard
+    }),
     deviceId: () => deviceId(),
     export: snapshot,
     import: (json) => { const obj = typeof json === 'string' ? JSON.parse(json) : json; applySnapshot(obj); toast('Imported ' + (obj.transactions || []).length + ' transactions'); return true; },

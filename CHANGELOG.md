@@ -3,6 +3,38 @@
 All notable changes to RupeeFlow. The build stamp shown in **Settings → About** matches the entries here,
 so you can confirm at a glance which version your phone is running.
 
+## 1.4.2 — 2026-09-13  ·  build `1.4.2+2026-09-13.1`
+
+- **Fixed: `INVALID PROPERTIES: UNSUPPORTED LOCALE: EN_IN` — sync could never start.** Creating the
+  spreadsheet asked Google for an `en_IN` locale; the Sheets API supports only a short list (`en`, `en_US`, …)
+  and rejects the entire create request, so no sheet was ever made. RupeeFlow now sends **no locale** (the app
+  writes RAW values and formats the currency itself, so the sheet's locale is irrelevant) and falls back to a
+  bare create if a property is ever refused.
+- **Sync failures can no longer masquerade as success.** `reconcile()` used to publish and then report
+  "synced" even when the publish had thrown — which is why a broken setup looked merely "Local-only". It now
+  propagates the failure, keeps the Drive copy locked, and stays in a visible error state until a sync works.
+- **Errors are translated, not shouted.** The status pill is a short "Needs attention"; the sync screen shows a
+  plain-English card (cause + what to do) with the raw Google message available under "What does this mean?",
+  covering unsupported-property, rate limit, Drive full, permission, stale session and missing-spreadsheet cases.
+- `RF.status()` added — one obvious place to read sync state (`G_` is the API, `G` holds status; getting that
+  wrong tripped up two of my own tests).
+- Demo data no longer shows activity **later today** than the current time (seeded clock times are clamped).
+- New suite `tests/sheetsetup.js` — 31 tests with a mock backend that rejects unsupported locales exactly like
+  Google: no locale is ever sent, setup survives a locale-rejecting backend, the failure is reported honestly,
+  error wording is right for six kinds of API error, and the recovery path (fix → "Sync now (merge)" → sheet
+  created, data seeded, lock released) works end to end.
+
+## 1.4.1 — 2026-09-12  ·  build `1.4.1+2026-09-12.5`
+
+- **Google sign-in failures are now explained in the app.** `Error 403: access_denied` — the most common
+  OAuth setup mistake (an unpublished "Testing" app with no test user added) — now opens a help sheet with
+  the exact Cloud Console steps instead of leaving you on Google's bare error page. Wrong-origin, blocked
+  pop-up, blocked cookies and "the window just closed" are diagnosed too, and a sign-in that never calls
+  back is detected after 25s and explained. The in-app setup list and `SETUP.md` gained the missing
+  Test-users / Publish-app step.
+- 6 new tests in `qa.js` covering both failure paths (explicit `access_denied` callback, and total silence)
+  and that a failed connect leaves the app usable and unguarded.
+
 ## 1.4.0 — 2026-09-12  ·  build `1.4.0+2026-09-12.4`
 
 - **Laptop layout.** From 1000px wide the app stops being a stretched phone: the bottom bar becomes a
