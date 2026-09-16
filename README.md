@@ -23,14 +23,14 @@ and prints a copyable diagnostic report.
 | **Works offline** | Yes — everything is cached on the phone (PWA installable) |
 | **Backend** | Google Sheets + Drive, called directly from the browser (no server, no fees) |
 | **Currency / FY** | ₹ with Indian digit grouping (₹1,45,000 / ₹1.45L / ₹1.2Cr), April–March |
-| **Tested** | 110 automated tests passing (32 app + 55 customisation + 13 setup checker + 10 update pipeline) + a 17-assertion CI gate |
+| **Tested** | 308 automated tests passing (46 app + 59 customisation + 74 options + 33 profiles/decoy + 31 sheet setup + 23 desktop layout + 19 two-device sync + 13 setup checker + 10 update pipeline) + a 17-assertion CI gate |
 
 ---
 
 ## 0. See it first
 
-`screenshots/00-overview.png` is a contact sheet of 13 real screens (light + AMOLED dark); the numbered
-PNGs in `screenshots/` are full-resolution:
+`screenshots/00-overview.png` is a contact sheet of the main screens; the numbered PNGs in
+`screenshots/` are full-resolution:
 
 | File | Screen |
 |---|---|
@@ -48,6 +48,15 @@ PNGs in `screenshots/` are full-resolution:
 | `12-dashboard-amoled-dark.png`, `13-analytics-dark.png` | AMOLED true-black mode |
 | `14-setup-checker.png` | The setup diagnostic page |
 | `15-customise-overview.png` | Contact sheet of the whole Customise suite |
+| `16-customise-modules.png` … `25-dashboard-customised.png` | The 7 Customise tabs in action |
+| `26-toast-fix.png` | Before/after: toasts now disappear instead of parking over the bottom nav |
+| `27-two-devices.png` | The same stats on phone and laptop, merged through one Google Sheet |
+| `28-desktop.png` | The laptop layout — side rail, two-column dashboard, wide tables |
+| `29-profiles.png` | Sign-in menu and the PIN gate for a decoy profile |
+| `30-budget-card-editable.png`, `33-budget-wizard.png` | The budget that explains itself, and its editor |
+| `31-passthrough-card.png`, `32-passthrough-screen.png` | Pass-through money — someone else's money, tracked separately |
+| `34-clear-sheet.png`, `35-guided-setup.png`, `36-setup-categories.png` | Clear data and the guided re-setup |
+| `37-home-visible.png`, `38-home-hidden.png` | Hide-balances on/off — nothing leaks either way |
 | `15-customise-layout.png` … `21-customise-dev.png` | Layout, fields, templates, rules, format, theme, dev panel |
 | `22-rule-editor.png`, `23-rule-json.png` | Rule builder + JSON editor |
 | `24-add-sheet-custom.png` | Add sheet with templates + custom fields |
@@ -198,6 +207,9 @@ Install RupeeFlow on the new phone → **More → Drive Sync** → paste the sam
 * Fixed/committed categories (rent, EMI, subscriptions) are treated as committed spend
 * Set limits per month, save as default for future months, copy last month, or auto-fill from averages
 * Tap a budget to drill into its transactions
+* The home card says **where its number comes from** — your month, your defaults, or the built-in
+  examples (“example limits” badge) — and offers **Edit budget** right there: one total, spread by
+  last month's spending, evenly, or keeping the current split, plus a shortcut for a single category
 
 ### Accounts
 * 6 types: bank, cash, wallet/UPI, credit card, investment, loan — with icon + colour
@@ -226,6 +238,26 @@ Install RupeeFlow on the new phone → **More → Drive Sync** → paste the sam
 
 ### Reimbursements
 * Outstanding vs settled, FY total, one-tap **Settle** (also logs the reimbursement as income)
+
+### Pass-through money (money that isn't yours)
+* Father sends ₹25,000 for his own rent and bills? Flip **🤝 Pass-through** on the entry and name who
+  it belongs to (Father, Mother, a friend, anything you type)
+* Balances still move — the money really is in your account — but the entry is **left out of your
+  income, expenses, category spend, budgets, savings rate and charts**
+* **More → Pass-through** shows what you are holding for each person (received − spent), flags
+  unsettled entries, and settles them one by one or all at once
+* Records tags them ("🤝 Father"), there is a filter chip for them, and both the CSV export and the
+  Drive sheet carry the person's name
+
+### Clear, reset & start again
+**Settings → Data & backup** gives you one sheet where you tick exactly what goes — transactions,
+pass-through entries only, reimbursement claims, account opening balances, budget limits, bills,
+goals, loans — with a live summary and a cancel that really changes nothing.
+* **Fresh start (guided)** wipes everything and walks you through **payment modes → categories →
+  budget → Drive backup**, so a blank app never stays blank: it ends with real accounts, real
+  categories and a working budget
+* Anything cleared stays in your Sheet until you sync, so RupeeFlow always asks whether to overwrite
+  Drive right after (keep it as a backup, or send the clear through)
 
 ### Reports & export
 * Full monthly statement (breakdown, income sources, budget compliance, top 8, FY summary) → **Print/PDF**
@@ -258,12 +290,16 @@ deliberate in both light and dark. **🎲 Surprise me** picks one for you.
 
 ### Settings & security
 Profile (name, work/home city), 4-digit **PIN lock** (asked at launch and after 5 min in background),
-**hide balances** toggle, Drive sync, reload starter kit, start blank, erase everything, app info.
+**hide balances** toggle, Drive sync, **Clear data…** (granular, with a live summary), **Fresh start
+(guided)**, reload starter kit, start blank, erase everything, app info.
 
 ### Money rules baked in
 * Net worth = assets − credit-card dues; liquid ≠ investments
 * Transfers never count as income or expense
 * Refunds/cashback are income, reimbursements are tracked separately and settled explicitly
+* **Pass-through money is never income or expense** — it only moves account balances
+* **Hide balances hides every amount, everywhere** (including toasts and the Sheet-backed screens);
+  only the amount you are typing stays readable
 * Savings rate = (income − expenses) / income; forecast = daily average × days in month
 * India: 3-digit grouping, lakh/crore compaction, April–March financial year
 
@@ -297,10 +333,11 @@ finance-tracker/
 ├─ serve.sh / serve.bat  ← one-command local server
 ├─ .github/workflows/    ← deploy.yml (validate → Pages) · test.yml (browser suite on PRs)
 ├─ tools/                ← bump.js (release stamp) · push.sh (one-command release)
-├─ screenshots/          ← 15 real screens (01-dashboard … 14-setup-checker)
+├─ screenshots/          ← 27 images (screens, customisation, toast fix, two-device proof)
 └─ tests/
-   ├─ qa.js              ← 32 end-to-end interaction tests (Playwright)
-   ├─ custom.js          ← 55 tests for fields / rules / templates / layout / theme / API
+   ├─ qa.js              ← 46 end-to-end interaction tests (Playwright)
+   ├─ custom.js          ← 59 tests for fields / rules / templates / layout / theme / API
+   ├─ options.js         ← 74 tests for hidden balances, editable budgets, clear/reset, pass-through
    ├─ setupcheck.js      ← 13 tests for the setup checker itself
    ├─ update.js          ← 10 tests proving the in-app update flow works
    ├─ ci-check.js        ← 17-assertion integrity gate used by GitHub Actions
@@ -313,10 +350,15 @@ Run the tests (needs `playwright` + Chromium, and the app served on port 8080):
 ```bash
 python3 -m http.server 8080 &
 node tests/ci-check.js    # integrity gate, no browser   (17 assertions, CI runs this)
-node tests/qa.js          # app behaviour                (32 tests)
-node tests/custom.js      # customisation layer          (55 tests)
+node tests/qa.js          # app behaviour                (46 tests)
+node tests/custom.js      # customisation layer          (59 tests)
 node tests/setupcheck.js  # setup checker behaviour      (13 tests)
 node tests/update.js      # in-app update pipeline       (10 tests — see GITHUB.md §10)
+node tests/twodevice.js   # phone + laptop sync          (19 tests, mocked Google — no credentials)
+node tests/options.js     # hide/budget/clear/pass-through (74 tests)
+node tests/profiles.js    # profiles, PIN gate, decoy    (33 tests — proves real data never leaks)
+node tests/desktop.js     # laptop layout, phone intact  (23 tests)
+node tests/sheetsetup.js  # Sheet creation + API errors (31 tests, mocked Google)
 node tests/gallery.js     # refresh screenshots/
 ```
 

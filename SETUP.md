@@ -231,10 +231,22 @@ identifier* for the app in **your own** Google account — no billing, no credit
     * scheme must match (`https`, or `http` for localhost only)
     * if you use a custom port, include it
 17. **Authorised redirect URIs:** leave empty (RupeeFlow uses Google's token client, not redirects).
+17b. **Let your account sign in.** OAuth consent screen → **Audience**:
+    * **Either** add every Google account you'll sign in with under **Test users** *(Testing mode only allows
+      accounts on this list — skipping it is the cause of `Error 403: access_denied`)*,
+    * **or** press **Publish app** so any account can sign in. You do **not** need Google verification for
+      `drive.file` + `userinfo.email`; you'll see an “unverified app” warning once — choose
+      **Advanced → Go to RupeeFlow (unsafe)**.
+    * Testing-mode grants expire after **7 days** (you'd reconnect weekly) — publishing avoids that.
 18. **Create** → copy the **Client ID**: it looks like
     `123456789012-abcdefghijklmnop.apps.googleusercontent.com`
 
-*Expected result:* a Client ID in your clipboard. Copy it into a note — also useful for other phones.
+*Expected result:* a Client ID in your clipboard. Copy it into a note — you'll paste the **same Client ID**
+into every device you use.
+
+> **Phone + laptop together:** the Client ID is per *app*, not per device, so the same one configures all of
+> them. When both devices connect with the **same Google account**, they share one spreadsheet and stay in
+> step automatically — see §7b.
 
 > **Optional:** if you want the consent screen to stop saying "unverified app" every 7 days, click
 > **Publish app** in the Audience tab. You do not need Google verification — with `drive.file` +
@@ -265,6 +277,91 @@ Do this **on the origin you registered in step 6d** (the hosted URL, or localhos
 1. Install RupeeFlow there (§5) using the **same hosted URL**.
 2. **More → Drive Sync** → paste the **same Client ID** → **Connect** with the **same Google account**.
 3. Tap **⬇ Load Drive → phone**.
+
+---
+
+## 7b. Using the same data on phone and laptop
+
+RupeeFlow keeps the data in **your Google Sheet**, so any device signed into the same Google account reads
+the same numbers. Two things have to line up:
+
+| | Phone | Laptop |
+|---|---|---|
+| Opens the app at | your Pages URL | the **same** URL (`http://localhost:8080` also works for local testing, but then it is a third sheet unless you connect the same account) |
+| OAuth Client ID | the same ID | the same ID |
+| Google account | your account | your account |
+
+**Steps**
+
+1. Set up Drive sync on the first device (below) — it creates
+   `RupeeFlow — Personal Finance (do not rename tabs)` in your Drive.
+2. On the second device, open the same URL, paste the **same Client ID**, tap **Connect**, choose the
+   **same Google account**.
+3. Done. The second device notices the existing sheet and **merges** into it — it never overwrites it.
+
+**What happens on every launch**
+
+The app signs in silently with the remembered account and reconciles: it reads the sheet, merges it with
+whatever is on the device (newest edit wins per entry), and publishes the result. So:
+
+* add an expense on the phone → open the laptop → it's there (usually within a few seconds)
+* edits to the same entry → the newer edit wins, with the device you're holding breaking exact ties
+* deletions sync too — a deleted entry doesn't come back on the next merge
+* a **brand-new device** (or one still showing starter data) can never wipe the sheet; it adopts the
+  sheet's copy first. Until that first merge the app shows *“Drive copy locked until first merge”*.
+
+**If something looks off**
+
+| Symptom | Fix |
+|---|---|
+| Laptop shows old numbers | Tap **Settings → Drive sync → 🔄 Sync now (merge)**. Auto-sync only pushes; the merge is what pulls. |
+| Two devices fought over the data | They can't now, but **↩︎ Undo last sync** on the sync screen restores that device's pre-merge copy. |
+| You want one device to win outright | **⬆ Force this device → Drive** (it asks for confirmation, because it replaces the sheet). |
+| Signed out after a while | Google tokens last ~1 hour; the app refreshes silently. If a browser blocks the refresh, tap **Reconnect Google account** once. |
+
+> **Note:** RupeeFlow merges *entries*, not field-by-field within an entry. If you edit the same
+> transaction on both devices at the same moment, the more recent save wins whole.
+
+---
+
+## 7c. Login, logout and decoy profiles (hiding your real data)
+
+RupeeFlow has no server account — so "login" means **switching local profiles**.
+Each profile is a completely separate dataset in the same browser: your real books, and any number of
+decoy ones you can show someone else.
+
+**Two ways to use it**
+
+| You want | Do this |
+|---|---|
+| Hand your phone to a friend/cabbie and show *something* | Tap the **avatar** (top-right) → **Sign out to Demo** |
+| Come back to your real data | Tap the avatar → **Switch to Personal** → enter your PIN |
+
+**Setting it up (once, 2 minutes)**
+
+1. Tap the **avatar** → **Profiles & privacy**.
+2. **＋ New profile** → name it (e.g. *Demo*), leave **Decoy profile** on, give it a **4-digit PIN** → Create.
+   *A decoy is created with its own realistic sample data, so it looks inhabited rather than empty.*
+3. You'll be asked for that PIN and signed straight into it. Tap the avatar → **Switch to Personal** to return.
+
+**What makes a decoy safe**
+
+| Guarantee | How |
+|---|---|
+| Your real entries are never in it | Separate storage keys per profile; entries are not copied across |
+| It can never reach your Google Sheet | A decoy carries no Client ID, no account and no sheet id, and sync is disabled |
+| Your PIN can't unlock it by accident | Each profile has its own PIN (or none) |
+| Launching the app can't expose you | **Open on a decoy at launch** (Settings → Security, or avatar menu) makes the app start in the decoy |
+| Nothing is lost | Switching saves the outgoing profile first; switch back any time with its PIN |
+
+**If you forget a profile's PIN** there is no recovery — the data is local to that browser (that's the
+point of it). Sign into the other profile, or use **More → Customise → Dev → Profiles** to manage them
+from the developer API: `RF.profiles.list()`, `RF.profiles.switch(id, pin)`, `RF.profiles.boot(id)`,
+`RF.profiles.remove(id)`.
+
+> **What a decoy does *not* do:** it isn't encryption. Someone technical with full access to the browser's
+> storage could still find the real dataset. For real protection, keep **PIN at launch** on, and remember
+> your data is safe in Google Drive anyway — erasing the app never erases your sheet.
 
 ---
 
@@ -347,6 +444,11 @@ Match the **exact text** you see. All of these are Google-side or browser-side, 
 
 | What you see | Cause | Fix |
 |---|---|---|
+| `INVALID PROPERTIES: UNSUPPORTED LOCALE: EN_IN` | Older RupeeFlow builds asked Google for an `en_IN` spreadsheet locale; the Sheets API only supports a short list (`en`, `en_US`, …) and rejects the *whole create*, so the sheet was never made | Update the app, then tap **Sync now (merge)** — it no longer sends a locale. Nothing is lost; local data is untouched. |
+| "Needs attention" badge on Drive sync | Any Sheets/Drive API refusal; the card beneath explains it in plain English | Read the card (the raw Google message is under **What does this mean?**), fix, then **Sync now (merge)** |
+| `Error 403: access_denied` when connecting | The OAuth app is still in **Testing** and your Google account isn't a test user | OAuth consent screen → **Audience** → add the exact account under **Test users** (or **Publish app**). RupeeFlow now detects this and shows the steps in-app. |
+| Sign-in works on the laptop but not the phone | Different Google account signed in, or that account isn't a test user | Add that account under **Test users**, or publish the app so any account works |
+| Asked to reconnect roughly every week | Testing-mode grants expire after 7 days | **Publish app** (Audience tab) |
 | `Error 400: origin_mismatch` | The page's origin isn't registered on the OAuth client | Add the **exact origin** (no path, no trailing slash) in Google Cloud → Clients → your client → Authorised JavaScript origins. Changes can take ~5 minutes to propagate. |
 | `idpiframe_initialization_failed` | Third-party cookies/storage blocked, or origin mismatch | Allow third-party cookies for `accounts.google.com`, and confirm the origin. Try a normal (non-incognito) window. |
 | "Google sign-in script could not load" | Offline, or the page is in an in-app/sandboxed browser | Open the URL directly in Chrome or Safari (not inside Instagram/LinkedIn/Gmail). |

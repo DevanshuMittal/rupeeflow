@@ -188,7 +188,7 @@ green. Phone-visible behaviour always shows up as the update bar.
 2. `deploy` job copies the app files into `_site/` and publishes them to Pages. Takes ~30–60 s.
 
 **`.github/workflows/test.yml`** — on pull requests: installs Chromium and runs the full browser suite
-(32 app + 55 customisation + 13 setup-checker tests, ≈3 minutes). Free minutes are plenty for a repo
+(46 app + 59 customisation + 33 profiles + 31 sheet setup + 23 desktop + 19 two-device sync + 13 setup-checker + 10 update-pipeline tests, ≈7 minutes). Free minutes are plenty for a repo
 this size; if you ever hit limits, drop this workflow and keep the Node-only check.
 
 **`.nojekyll`** is created during deploy so GitHub doesn't try to run Jekyll over the files.

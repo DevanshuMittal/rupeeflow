@@ -225,7 +225,7 @@ textarea{min-height:64px;resize:vertical}
 .sheet-head{display:flex;align-items:center;gap:10px;padding:14px 16px 10px;border-bottom:1px solid var(--border);flex:0 0 auto}
 .sheet-head h3{flex:1;font-size:16.5px}
 .grab{width:38px;height:4px;border-radius:99px;background:var(--border);margin:8px auto -4px}
-.sheet-body{overflow-y:auto;padding:14px 16px calc(18px + env(safe-area-inset-bottom));-webkit-overflow-scrolling:touch}
+.sheet-body{overflow-y:auto;padding:14px 16px calc(18px + env(safe-area-inset-bottom));-webkit-overflow-scrolling:touch;flex:1 1 auto;min-height:0}
 .sheet-foot{padding:12px 16px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--border);display:flex;gap:10px;flex:0 0 auto;background:var(--surface)}
 
 /* ---------- keypad ---------- */
@@ -452,6 +452,7 @@ textarea{min-height:64px;resize:vertical}
   <section class="screen" id="s-goals"></section>
   <section class="screen" id="s-loans"></section>
   <section class="screen" id="s-reimb"></section>
+  <section class="screen" id="s-pass"></section>
   <section class="screen" id="s-reports"></section>
   <section class="screen" id="s-sync"></section>
   <section class="screen" id="s-themes"></section>
@@ -499,7 +500,7 @@ textarea{min-height:64px;resize:vertical}
 
 /* Bump this on every release — tools/bump.js updates it here and in sw.js.
    The running build is compared against the deployed one to offer in-app updates. */
-const APP_BUILD = '1.4.2+2026-09-13.1';
+const APP_BUILD = '1.4.3+2026-09-16.1';
 
 /* ---------------------------------- 1. utils ------------------------------- */
 const $  = (s, r = document) => r.querySelector(s);
@@ -767,7 +768,7 @@ const DEFAULT_CUSTOM = {
   navTabs: ['home', 'records', 'analytics'],   /* 3 configurable slots (+ More) */
   hidden: {},             /* {module: true} hides it from the More hub  */
   kpis: ['income', 'expense', 'saved', 'forecast'],
-  widgetOrder: ['hero', 'kpis', 'accounts', 'budget', 'spend', 'bars', 'insights', 'bills', 'recent', 'goals', 'quick'],
+  widgetOrder: ['hero', 'kpis', 'accounts', 'pass', 'budget', 'spend', 'bars', 'insights', 'bills', 'recent', 'goals', 'quick'],
   widgetOff: {},          /* {widgetId: true} */
   theme: null,            /* {name, hue, accent, accent2} custom palette */
   devMode: false,
@@ -793,6 +794,7 @@ const WIDGET_DEFS = [
   ['hero', 'Net-worth hero'],
   ['kpis', 'KPI cards'],
   ['accounts', 'Account carousel'],
+  ['pass', 'Pass-through money'],
   ['budget', 'Budget health'],
   ['spend', 'Where the money went'],
   ['bars', 'Income vs expense (6 months)'],
@@ -806,7 +808,7 @@ const NAV_OPTS = [['home', 'Home', 'home'], ['records', 'Records', 'list'], ['an
   ['budgets', 'Budgets', 'target'], ['accounts', 'Accounts', 'bank'], ['goals', 'Goals', 'target'],
   ['recurring', 'Bills', 'repeat'], ['categories', 'Categories', 'tag'], ['reports', 'Reports', 'doc'],
   ['cust', 'Customise', 'spark']];
-const MODULE_DEFS = [['loans', 'Loans & EMI'], ['goals', 'Goals'], ['reimb', 'Reimbursements'],
+const MODULE_DEFS = [['pass', 'Pass-through money'], ['loans', 'Loans & EMI'], ['goals', 'Goals'], ['reimb', 'Reimbursements'],
   ['recurring', 'Bills & subs'], ['categories', 'Categories'], ['reports', 'Reports'], ['themes', 'Themes'], ['budgets', 'Budgets']];
 const DEFAULT_FIELDS = [
   { id: 'f_proj', label: 'Project', key: 'project', type: 'select', options: ['Day job', 'Side project', 'Personal', 'Family'], appliesTo: 'all', showInList: true },
@@ -1073,7 +1075,10 @@ const txIn = (from, to) => S.transactions.filter(t => t.date >= from && t.date <
 const monthTx = (ym) => { const r = monthRange(ym); return txIn(r.from, r.to); };
 function totals(list) {
   let inc = 0, exp = 0, trf = 0;
-  for (const t of list) { if (t.type === 'income') inc += t.amount; else if (t.type === 'expense') exp += t.amount; else trf += t.amount; }
+  for (const t of list) {
+    if (t.pass) continue; /* pass-through money is not yours to count */
+    if (t.type === 'income') inc += t.amount; else if (t.type === 'expense') exp += t.amount; else trf += t.amount;
+  }
   return { inc, exp, trf, net: inc - exp, save: inc - exp, rate: inc > 0 ? ((inc - exp) / inc) * 100 : 0, count: list.length };
 }
 function accBalance(id) {
@@ -1088,10 +1093,32 @@ function accBalance(id) {
 const netWorth = () => sum(S.accounts, a => a.type === 'credit' ? -accBalance(a.id) : accBalance(a.id));
 const liquid = () => sum(S.accounts.filter(a => ['bank', 'wallet', 'cash'].includes(a.type)), a => accBalance(a.id));
 const budgetFor = (ym, catId) => { const b = S.budgets[ym] || {}; if (b[catId] != null) return b[catId]; const d = S.budgets['default'] || {}; return d[catId] != null ? d[catId] : (DEFAULT_BUDGETS[catId] || 0); };
+/* ---- pass-through money ----------------------------------------------------
+   Money that is not yours: it arrives so you can run someone else's spends
+   (father's rent, a friend's booking). It must move real account balances but
+   must never be counted as your income, expense, budget spend or savings. */
+const passList = () => S.transactions.filter(t => t.pass);
+const passWhoOf = (t) => (t.who || '').trim() || 'Unnamed';
+function passStats(list) {
+  const by = {};
+  for (const t of (list || S.transactions)) {
+    if (!t.pass) continue;
+    const w = passWhoOf(t);
+    const r = by[w] || (by[w] = { who: w, got: 0, paid: 0, settled: 0, open: 0, count: 0 });
+    if (t.type === 'income') r.got += t.amount; else if (t.type === 'expense') r.paid += t.amount;
+    r.count++;
+    if (t.pass === 2) r.settled++; else r.open++;
+  }
+  return Object.values(by).map(r => ({ ...r, held: r.got - r.paid })).sort((a, b) => b.held - a.held);
+}
+/* only unsettled pass entries count as money you are holding right now */
+const passHeld = () => sum(S.transactions.filter(t => t.pass === 1 && t.type === 'income'), t => t.amount)
+  - sum(S.transactions.filter(t => t.pass === 1 && t.type === 'expense'), t => t.amount);
+
 const reimbPending = () => sum(S.transactions.filter(t => t.reimb === 1), t => t.amount);
 const reimbSettled = () => sum(S.transactions.filter(t => t.reimb === 2), t => t.amount);
 function catSpend(ym, type) {
-  const m = {}; for (const t of monthTx(ym)) if (t.type === type) m[t.cat] = (m[t.cat] || 0) + t.amount;
+  const m = {}; for (const t of monthTx(ym)) if (t.type === type && !t.pass) m[t.cat] = (m[t.cat] || 0) + t.amount;
   return Object.entries(m).map(([id, amt]) => ({ cat: catById(id), amt })).sort((a, b) => b.amt - a.amt);
 }
 /* ============================================================================
@@ -1206,7 +1233,7 @@ function statBar(label, value, max, color, sub) {
    ========================================================================== */
 let toastT = null;
 function toast(msg, ms = 2100) {
-  const el = $('#toast'); el.textContent = msg; el.classList.add('on');
+  const el = $('#toast'); el.textContent = S.settings.hideBalances ? maskStr(msg) : msg; el.classList.add('on');
   clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('on'), ms);
 }
 const sheetStack = [];
@@ -1227,6 +1254,7 @@ function renderSheet() {
   $('#sheetBack').style.display = sheetStack.length > 1 ? 'grid' : 'none';
   $('#sheetBody').scrollTop = 0;
   if (top.onMount) top.onMount($('#sheetBody'), $('#sheetFoot'));
+  if (S.settings.hideBalances) applyHideMask(document.body);
 }
 function backSheet() {
   const top = sheetStack.pop();
@@ -1254,21 +1282,23 @@ function confirmSheet(title, msg, okLabel, onOk) {
   });
 }
 
-const SCREENS = ['home', 'records', 'analytics', 'more', 'budgets', 'accounts', 'categories', 'recurring', 'goals', 'loans', 'reimb', 'reports', 'sync', 'themes', 'settings', 'cust'];
-const SUBSCREENS = ['budgets', 'accounts', 'categories', 'recurring', 'goals', 'loans', 'reimb', 'reports', 'sync', 'themes', 'settings', 'cust'];
+const SCREENS = ['home', 'records', 'analytics', 'more', 'budgets', 'accounts', 'categories', 'recurring', 'goals', 'loans', 'reimb', 'pass', 'reports', 'sync', 'themes', 'settings', 'cust'];
+const SUBSCREENS = ['budgets', 'accounts', 'categories', 'recurring', 'goals', 'loans', 'reimb', 'pass', 'reports', 'sync', 'themes', 'settings', 'cust'];
 let route = 'home';
 function go(id, silent) {
   if (!SCREENS.includes(id)) id = 'home';
   route = id;
   $$('.screen').forEach(s => s.classList.toggle('active', s.id === 's-' + id));
   renderNav();
-  const r = { records: 'renderRecords', analytics: 'renderAnalytics', home: 'renderHome', more: 'renderMore', budgets: 'renderBudgets', accounts: 'renderAccounts', categories: 'renderCategories', recurring: 'renderRecurring', goals: 'renderGoals', loans: 'renderLoans', reimb: 'renderReimb', reports: 'renderReports', sync: 'renderSync', themes: 'renderThemes', settings: 'renderSettings', cust: 'renderCustomize' }[id];
+  const r = { records: 'renderRecords', analytics: 'renderAnalytics', home: 'renderHome', more: 'renderMore', budgets: 'renderBudgets', accounts: 'renderAccounts', categories: 'renderCategories', recurring: 'renderRecurring', goals: 'renderGoals', loans: 'renderLoans', reimb: 'renderReimb', pass: 'renderPass', reports: 'renderReports', sync: 'renderSync', themes: 'renderThemes', settings: 'renderSettings', cust: 'renderCustomize' }[id];
   if (window[r]) window[r]();
+  if (S.settings.hideBalances) applyHideMask(document.body);
   if (window.__rfEmit) window.__rfEmit('route', id);
   if (!silent) window.scrollTo({ top: 0, behavior: S.settings.reduceMotion ? 'auto' : 'smooth' });
   try { history.replaceState(null, '', '#' + id); } catch (e) { }
 }
-function rerender() { go(route, true); }
+function rerender() { return _rerender(); }
+function _rerender() { go(route, true); }
 function backBtnBar(title, sub) {
   return `<div class="row" style="margin:6px 0 4px">
     <button class="iconbtn" data-act="back" aria-label="Back"></button>
@@ -1347,9 +1377,40 @@ function fieldInputs(type, values) {
 /* ============================================================================
    8. shared widgets
    ========================================================================== */
-function M(n, dec) { return S.settings.hideBalances ? '₹•••••' : inr(n, dec); }
+const MASK = '\u20b9\u2022\u2022\u2022\u2022\u2022';
+function maskStr(str) { return String(str).replace(/\u20b9\s?\d[\d,]*(?:\.\d+)?\s?(?:lakh|crore|l|k|cr)?(?![a-z])/gi, MASK); }
+/* Balances are hidden by masking every amount the app *shows*, in one pass over the rendered
+   DOM. Doing it per-call-site meant new screens leaked numbers (the budget rows did).
+   Anything the user is actively typing stays readable: inputs, keypad, and [data-nomask]. */
+function applyHideMask(root) {
+  if (!S.settings.hideBalances) return 0;
+  const skip = 'input,textarea,select,option,.kp-display,.keypad,.pinpad,#lock,.toast,[data-nomask]';
+  const walk = document.createTreeWalker(root || document.body, NodeFilter.SHOW_TEXT, {
+    acceptNode(n) {
+      const p = n.parentElement;
+      if (!p || p.closest(skip)) return NodeFilter.FILTER_REJECT;
+      return /\u20b9\s?\d/.test(n.nodeValue || '') ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    }
+  });
+  const hits = [];
+  while (walk.nextNode()) hits.push(walk.currentNode);
+  for (const n of hits) { n.nodeValue = maskStr(n.nodeValue); }
+  return hits.length;
+}
+function M(n, dec) { return S.settings.hideBalances ? MASK : inr(n, dec); }
+/* Belt and braces: while balances are hidden, watch the DOM and mask anything that
+   appears later (a re-rendered card, a chart label, a toast). Without this a single
+   delayed write was enough to show a real number on a "hidden" screen. */
+let maskObs = null;
+function watchMask() {
+  const want = !!(S.settings && S.settings.hideBalances);
+  if (want && !maskObs && window.MutationObserver) {
+    maskObs = new MutationObserver(() => { applyHideMask(document.body); });
+    maskObs.observe(document.body, { childList: true, subtree: true, characterData: true });
+  } else if (!want && maskObs) { maskObs.disconnect(); maskObs = null; }
+}
 function money(n, dec, sign) {
-  if (S.settings.hideBalances) return '₹•••••';
+  if (S.settings.hideBalances) return MASK;
   if (sign && n > 0) return '+' + inr(n, dec);
   return inr(n, dec);
 }
@@ -1374,7 +1435,7 @@ function txRow(t, opt = {}) {
     <div class="av" style="background:${hexA(c.color, .14)}">${c.e}</div>
     <div class="grow">
       <div class="t1">${esc(t.note || c.name)}</div>
-      <div class="t2">${esc(c.name)} · ${a.e} ${esc(a.name)}${t.reimb === 1 ? ' · <span class="tag w">reimb. due</span>' : ''}${(t.tags || []).includes('delhi') ? ' · <span class="tag p">delhi</span>' : ''}</div>
+      <div class="t2">${esc(c.name)} · ${a.e} ${esc(a.name)}${t.pass ? ` · <span class="tag p">🤝 ${esc(passWhoOf(t))}${t.pass === 2 ? ' · settled' : ''}</span>` : ''}${t.reimb === 1 ? ' · <span class="tag w">reimb. due</span>' : ''}${(t.tags || []).includes('delhi') ? ' · <span class="tag p">delhi</span>' : ''}</div>
     </div>
     <div class="right">
       <div class="amt ${amtCls}">${sign}${money(t.amount)}</div>
@@ -1441,6 +1502,8 @@ function insights(ym) {
   if (subs.length) out.push({ e: '🧾', t: `Subscriptions & tools burn <b>${money(sum(subs, r => r.amount))}</b>/month across ${subs.length} services — ${sum(subs, r => r.amount) * 12 > cur.inc * 0.5 ? 'cancel two and fund a goal instead.' : 'audit yearly once.'}` });
   const pend = reimbPending();
   if (pend > 0) out.push({ e: '🧾', t: `<b>${money(pend)}</b> of office spends is still marked reimbursable — settle it from the Reimbursements page.` });
+  const pHeld = passHeld();
+  if (pHeld > 0) out.push({ e: '🤝', t: `<b>${money(pHeld)}</b> is pass-through money you are holding for someone else. It is left out of your income, expenses and budgets.` });
   const over = Object.entries(S.budgets[ym] || {}).filter(([id, lim]) => { const sp = sum(monthTx(ym).filter(t => t.type === 'expense' && t.cat === id), t => t.amount); return lim && sp > lim; });
   if (over.length) out.push({ e: '🚧', t: `<b>${over.length}</b> budget${over.length > 1 ? 's' : ''} exceeded: ${over.slice(0, 3).map(([id]) => esc(catById(id).name)).join(', ')}.` });
   const delhi = sum(S.transactions.filter(t => (t.tags || []).includes('delhi') && t.type === 'expense'), t => t.amount);
@@ -1503,7 +1566,7 @@ window.renderHome = function () {
   const dayN = ym === currentYM() ? periodElapsed(ym) : periodDays(ym), dim = periodDays(ym);
   const daily = cur.exp / Math.max(1, dayN), pace = daily * dim;
   const cats = catSpend(ym, 'expense');
-  const budgetIds = Object.keys(S.budgets[ym] || {}).length ? Object.keys(S.budgets[ym]) : Object.keys(DEFAULT_BUDGETS);
+  const budgetIds = budgetIdsFor(ym);
   const budTotal = sum(budgetIds, id => budgetFor(ym, id));
   const budSpent = sum(budgetIds, id => sum(monthTx(ym).filter(t => t.type === 'expense' && t.cat === id), t => t.amount));
   const budPct = pct(budSpent, budTotal);
@@ -1544,15 +1607,25 @@ window.renderHome = function () {
       <div class="nm">${a.e} ${esc(a.name)}</div><div class="bal" style="color:${b < 0 ? 'var(--neg)' : 'var(--text)'}">${M(b)}</div>
       <div class="ty">${a.type}</div></div>`; }).join('')}</div></div>`;
 
-  parts.budget = budTotal ? `<div class="section"><div class="section-head"><h2>Budget health · ${esc(periodLabel(ym))}</h2><button class="link" data-nav="budgets">Details</button></div>
+  const passN = passHeld();
+  parts.pass = passN || passList().length ? `<div class="section"><div class="section-head"><h2>Pass-through money</h2><button class="link" data-nav="pass">Manage</button></div>
+    <div class="card pad"><div class="between"><div><div class="tiny muted" style="font-weight:700">HOLDING FOR OTHERS</div>
+      <div style="font-size:20px;font-weight:800">${money(passN)}</div></div>
+      <div class="right tiny muted" style="max-width:46%">Not your income or expense${passStats().length ? ` · ${passStats().map(r => esc(r.who)).join(', ')}` : ''}</div></div></div></div>` : '';
+  const budSrc = budgetSource(ym);
+  parts.budget = budTotal ? `<div class="section"><div class="section-head"><h2>Budget health · ${esc(periodLabel(ym))}</h2>
+      <button class="link" style="white-space:nowrap" data-act="budgetwiz">Edit budget</button>
+      <button class="link" style="white-space:nowrap" data-nav="budgets">Details</button></div>
     <div class="card pad">
       <div class="between"><div><div class="tiny muted" style="font-weight:700">TOTAL SPENT</div><div style="font-size:20px;font-weight:800">${money(budSpent)}</div></div>
-        <div class="right"><div class="tiny muted" style="font-weight:700">BUDGET</div><div style="font-size:20px;font-weight:800">${money(budTotal)}</div></div></div>
+        <div class="right"><div class="tiny muted" style="font-weight:700">BUDGET</div><div style="font-size:20px;font-weight:800">${money(budTotal)}</div>
+          ${budSrc === 'builtin' ? '<div class="tiny" style="color:var(--warn,#B45309);margin-top:2px">example limits</div>' : budSrc === 'default' ? '<div class="tiny muted" style="margin-top:2px">your defaults</div>' : ''}</div></div>
+      ${budSrc === 'builtin' ? `<button class="btn soft sm block" style="margin-top:10px" data-act="budgetwiz">Set my own monthly budget →</button>` : ''}
       <div class="progress" style="margin-top:11px;height:10px"><i style="width:${clamp(budPct, 0, 100)}%;background:${progressColor(budPct)}"></i></div>
       <div class="between" style="margin-top:7px"><span class="sm" style="font-weight:700;color:${progressColor(budPct)}">${budPct.toFixed(0)}% used</span>
         <span class="sm muted">${budSpent > budTotal ? `<b class="neg">${money(budSpent - budTotal)} over</b>` : `${money(budTotal - budSpent)} left`}</span></div>
       <div class="sep"></div>
-      ${budgetIds.map(id => ({ id, lim: budgetFor(ym, id), sp: sum(monthTx(ym).filter(t => t.type === 'expense' && t.cat === id), t => t.amount) }))
+      ${budgetIds.map(id => ({ id, lim: budgetFor(ym, id), sp: sum(monthTx(ym).filter(t => t.type === 'expense' && t.cat === id && !t.pass), t => t.amount) }))
         .filter(r => r.lim > 0).sort((a, b) => pct(b.sp, b.lim) - pct(a.sp, a.lim)).slice(0, 4)
         .map(r => statBar(catById(r.id).name, r.sp, r.lim, progressColor(pct(r.sp, r.lim)))).join('')}
     </div></div>` : '';
@@ -1649,7 +1722,7 @@ let recFilter = { type: 'all', cat: '', acc: '', tag: '', q: '' };
 window.renderRecords = function () {
   const ym = curYM;
   let list = monthTx(ym);
-  if (recFilter.type !== 'all') list = list.filter(t => t.type === recFilter.type || (recFilter.type === 'reimb' && t.reimb === 1));
+  if (recFilter.type !== 'all') list = list.filter(t => t.type === recFilter.type || (recFilter.type === 'reimb' && t.reimb === 1) || (recFilter.type === 'pass' && t.pass));
   if (recFilter.cat) list = list.filter(t => t.cat === recFilter.cat);
   if (recFilter.acc) list = list.filter(t => t.acc === recFilter.acc || t.to === recFilter.acc);
   if (recFilter.tag) list = list.filter(t => (t.tags || []).includes(recFilter.tag));
@@ -1683,6 +1756,7 @@ window.renderRecords = function () {
       <span class="chip ${recFilter.type === 'income' ? 'on' : ''}" data-f="type" data-v="income">Income</span>
       <span class="chip ${recFilter.type === 'transfer' ? 'on' : ''}" data-f="type" data-v="transfer">Transfers</span>
       <span class="chip ${recFilter.type === 'reimb' ? 'on' : ''}" data-f="type" data-v="reimb">Reimb. due</span>
+      <span class="chip ${recFilter.type === 'pass' ? 'on' : ''}" data-f="type" data-v="pass">🤝 Pass-through</span>
     </div>
     <div class="chips" style="margin-top:2px">
       <span class="chip ${!recFilter.acc ? 'on' : ''}" data-f="acc" data-v="">All accounts</span>
@@ -1752,7 +1826,7 @@ function txSheet(id, preset) {
     </div>
     <div class="kp-display">
       <div class="expr" id="kpExpr">${esc(expr) || '&nbsp;'}</div>
-      <div class="val" id="kpVal">${inr(evalExpr(expr), true)}</div>
+      <div class="val" id="kpVal" data-nomask>${inr(evalExpr(expr), true)}</div>
     </div>
     <div class="keypad" id="keypad">
       ${['7', '8', '9', '⌫', '4', '5', '6', '+', '1', '2', '3', '−', '.', '0', '00', '×', '÷', '(', ')', '/'].map(k =>
@@ -1787,6 +1861,14 @@ function txSheet(id, preset) {
     ${draft.type === 'expense' ? `<div class="opt-row" style="border-radius:13px;border:1px solid var(--border);margin-top:6px">
       <div class="grow"><strong>Reimbursable</strong><span>Office spend you'll claim back</span></div>
       <label class="switch"><input type="checkbox" id="fReimb" ${draft.reimb === 1 ? 'checked' : ''}><span class="slider"></span></label></div>` : ''}
+    <div class="opt-row" style="border:1px solid var(--border);border-radius:13px">
+      <div class="grow"><strong>🤝 Pass-through</strong><span>Someone else's money — you are only moving it for them</span></div>
+      <label class="switch"><input type="checkbox" id="fPass" ${draft.pass ? 'checked' : ''}><span class="slider"></span></label></div>
+    <div id="fPassBox" style="display:${draft.pass ? 'block' : 'none'}">
+      <div class="field"><label>Whose money is it?</label><input id="fWho" value="${esc(draft.who || '')}" placeholder="e.g. Father">
+        <div class="chips">${['Father', 'Mother', 'Brother', 'Sister', 'Friend'].map(w => `<span class="chip" data-who="${w}">${w}</span>`).join('')}</div></div>
+      <div class="banner"><span class="e">ℹ️</span><div>Balances still move, but this entry is <b>left out of your income, expenses, budgets and savings rate</b>. See it under More → Pass-through.</div></div>
+    </div>
     ${draft.type !== 'transfer' && fieldsFor(draft.type).length ? `<div class="sep"></div>${fieldInputs(draft.type, draft.fields)}` : ''}
     <div class="field" style="margin-top:14px"><label>Quick presets</label>
       <div class="chips">
@@ -1797,7 +1879,10 @@ function txSheet(id, preset) {
   openSheet({
     title: editing ? 'Edit transaction' : 'New ' + draft.type, body: body(), foot: foot(),
     onMount(b, f) {
-      const sync = (redo) => { $('#sheetBody').innerHTML = body(); if (redo) bind(); refoot(); };
+      const sync = (redo) => {
+        if ($('#fWho')) draft.who = $('#fWho').value;                     /* keep typed person name */
+        $('#sheetBody').innerHTML = body(); if (redo) bind(); refoot();
+      };
       const refoot = () => { $('#sheetFoot').innerHTML = foot(); bindFoot(); };
       const bindFoot = () => {
         $('[data-x=cancel]', $('#sheetFoot')).onclick = () => backSheet();
@@ -1812,6 +1897,7 @@ function txSheet(id, preset) {
         const cf = {}; $$('[data-cf]', $('#sheetBody')).forEach(el => { if (el.value !== '' && el.value != null) cf[el.dataset.cf] = el.value; });
         const date = ($('#fDate') || {}).value || todayISO();
         const reimbEl = $('#fReimb');
+        const passEl = $('#fPass');
         const fromAcc = $('#fAcc'), toAcc = $('#fTo');
         const rec = {
           id: draft.id || uid('t'), type: draft.type, amount: amt,
@@ -1820,7 +1906,9 @@ function txSheet(id, preset) {
           to: draft.type === 'transfer' ? (toAcc ? toAcc.value : draft.to) : null,
           date, time: new Date().toTimeString().slice(0, 5), note, tags: draft.tags || [],
           fields: Object.assign({}, draft.fields || {}, cf),
-          reimb: draft.type === 'expense' && reimbEl && reimbEl.checked ? 1 : 0,
+          reimb: draft.type === 'expense' && !(passEl && passEl.checked) && reimbEl && reimbEl.checked ? 1 : 0,
+          pass: passEl && passEl.checked ? 1 : 0,
+          who: passEl && passEl.checked ? (($('#fWho') || {}).value || 'Unnamed').trim() : '',
           created: draft.created || Date.now(), updated: Date.now()
         };
         if (editing) { const i = S.transactions.findIndex(t => t.id === editing.id); S.transactions[i] = rec; }
@@ -1833,6 +1921,10 @@ function txSheet(id, preset) {
         rerender();
       };
       function bind() {
+        const passT = $('#fPass');
+        /* must re-bind: the toggle redraws the whole body, keypad and chips included */
+        if (passT) passT.onchange = () => { draft.pass = passT.checked ? 1 : 0; sync(true); };
+        $$('[data-who]', b).forEach(c => c.onclick = () => { const i = $('#fWho'); if (i) i.value = c.dataset.who; draft.who = c.dataset.who; });
         $$('#keypad .key', b).forEach(k => k.onclick = () => {
           const v = k.dataset.k;
           if (v === '=') { const r = evalExpr(expr); expr = r ? String(round2(r)) : ''; }
@@ -1903,10 +1995,13 @@ function txDetail(id) {
       <div class="kv"><span>Tags</span><b>${(t.tags || []).length ? t.tags.map(x => '#' + esc(x)).join(' ') : '—'}</b></div>
       ${Object.entries(t.fields || {}).filter(([k, v]) => v !== '' && v != null).map(([k, v]) => {
         const f = fieldByKey(k); return `<div class="kv"><span>${esc(f ? f.label : k)}</span><b>${esc(v)}</b></div>`; }).join('')}
+      ${t.pass ? `<div class="kv"><span>Pass-through</span><b>${esc(passWhoOf(t))} · ${t.pass === 1 ? '<span class="tag w">open</span>' : '<span class="tag g">settled</span>'}</b></div>
+        <div class="tiny muted" style="margin-top:6px">Left out of your income, expenses, budgets and savings rate.</div>` : ''}
       ${t.reimb ? `<div class="kv"><span>Reimbursement</span><b>${t.reimb === 1 ? '<span class="tag w">due</span>' : '<span class="tag g">settled</span>'}</b></div>` : ''}
       <div class="kv"><span>Last edited</span><b>${timeAgo(t.updated)}</b></div>
     </div>
     ${t.reimb === 1 ? `<div style="margin-top:12px"><button class="btn block soft" data-act="reimbsettle" data-id="${t.id}">✅ Mark reimbursement received</button></div>` : ''}
+    ${t.pass === 1 ? `<div style="margin-top:12px"><button class="btn block soft" data-act="passsettle" data-id="${t.id}">🤝 Mark this pass-through entry settled</button></div>` : ''}
     <div style="height:6px"></div>`,
     foot: `<button class="btn" data-x="del">🗑</button>
       <button class="btn grow" data-x="dup">Duplicate</button>
@@ -2056,6 +2151,7 @@ window.renderAnalytics = function () {
     <div class="sep"></div>
     <div class="kv"><span>Reimbursements outstanding</span><b class="neg">${money(reimbPending())}</b></div>
     <div class="kv"><span>Reimbursements settled</span><b class="pos">${money(reimbSettled())}</b></div>
+    <div class="kv"><span>Pass-through held for others</span><b>${money(passHeld())}</b></div>
   </div>
   <div class="card pad" style="margin-top:12px">
     <h4>Budget adherence</h4>
@@ -2091,6 +2187,81 @@ function catDrill(catId) {
 /* ============================================================================
    13. BUDGETS
    ========================================================================== */
+/* Where the numbers on the budget card come from — so ₹93,200 is never a mystery. */
+function budgetSource(ym) {
+  const mine = Object.keys(S.budgets[ym] || {}).length > 0;
+  const def = Object.keys(S.budgets['default'] || {}).length > 0;
+  if (mine) return 'month';
+  if (def) return 'default';
+  return 'builtin';
+}
+function budgetIdsFor(ym) {
+  const ids = Object.keys(S.budgets[ym] || {}).length ? Object.keys(S.budgets[ym]) : Object.keys(DEFAULT_BUDGETS);
+  return uniq(ids.concat(Object.keys(S.budgets['default'] || {})));
+}
+/* Total + distribution wizard. Answers "where do I edit ₹93,200?". */
+function budgetWizard() {
+  const ym = curYM;
+  const ids = S.categories.filter(c => c.type === 'expense').map(c => c.id);
+  const spendOf = id => sum(monthTx(addMonths(ym, -1)).filter(t => t.type === 'expense' && t.cat === id && !t.pass), t => t.amount);
+  const curTotal = sum(budgetIdsFor(ym), id => budgetFor(ym, id));
+  const src = budgetSource(ym);
+  openSheet({
+    title: 'Set up your budget',
+    body: `<div class="banner ${src === 'builtin' ? 'warn' : ''}" style="margin-bottom:12px"><span class="e">📐</span>
+      <div><b>${src === 'builtin' ? 'Right now these are the built-in example limits' : src === 'default' ? 'These are your saved default limits' : 'These are your limits for ' + esc(monLabel(ym, 1))}</b>
+      <div class="tiny muted" style="margin-top:2px">${src === 'builtin' ? 'Nothing you have set — the card shows them so the screen isn\u2019t empty. Put your own numbers in below.' : 'Editing here replaces them.'}</div></div></div>
+      <div class="field"><label>Total monthly budget (₹)</label>
+        <input id="bwTotal" type="number" inputmode="numeric" value="${Math.round(curTotal)}"></div>
+      <div class="field"><label>Spread it across categories</label>
+        <div class="chips" id="bwMode">
+          <span class="chip on" data-m="prop">By last month\u2019s spending</span>
+          <span class="chip" data-m="even">Evenly</span>
+          <span class="chip" data-m="keep">Keep current split</span>
+        </div></div>
+      <div class="field"><label>Or set one category</label>
+        <div class="chips">${S.categories.filter(c => c.type === 'expense').slice(0, 10).map(c => `<span class="chip" data-cat="${c.id}">${c.e} ${esc(c.name)}</span>`).join('')}</div></div>
+      <div class="tiny muted" id="bwPreview"></div>`,
+    foot: `<button class="btn soft grow" data-x="c">Cancel</button><button class="btn primary grow" data-bw-apply="1">Apply budget</button>`,
+    onMount(b, f) {
+      const total = () => Math.max(0, +($('#bwTotal').value || 0));
+      const preview = () => {
+        const t = total(), mode = ($('#bwMode .chip.on') || {}).dataset ? $('#bwMode .chip.on').dataset.m : 'prop';
+        const base = ids.map(id => spendOf(id));
+        const sumBase = base.reduce((a, x) => a + x, 0);
+        const out = [];
+        ids.forEach((id, i) => {
+          const share = mode === 'even' ? 1 / ids.length
+            : mode === 'prop' ? (sumBase > 0 ? base[i] / sumBase : 1 / ids.length)
+            : (budgetFor(ym, id) / Math.max(1, curTotal));
+          const v = Math.round(t * share / 10) * 10;
+          if (v > 0) out.push(catById(id).name + ' ' + inr(v));
+        });
+        $('#bwPreview').innerHTML = t ? 'Roughly: ' + out.slice(0, 5).map(esc).join(' · ') + (out.length > 5 ? ' …' : '') : '';
+      };
+      $$('#bwMode .chip', b).forEach(c => c.onclick = () => { $$('#bwMode .chip', b).forEach(x => x.classList.remove('on')); c.classList.add('on'); preview(); });
+      $('#bwTotal').oninput = preview; preview();
+      $$('[data-cat]', b).forEach(c => c.onclick = () => { closeSheet(); setTimeout(() => budgetSheet(c.dataset.cat), 120); });
+      $('[data-x=c]', f).onclick = () => backSheet();
+      $('[data-bw-apply]', f).onclick = () => {
+        const t = total(); if (!(t > 0)) return toast('Enter a monthly budget first');
+        const mode = ($('#bwMode .chip.on') || {}).dataset ? $('#bwMode .chip.on').dataset.m : 'prop';
+        const base = ids.map(id => spendOf(id));
+        const sumBase = base.reduce((a, x) => a + x, 0);
+        S.budgets[ym] = S.budgets[ym] || {};
+        ids.forEach((id, i) => {
+          const share = mode === 'even' ? 1 / ids.length
+            : mode === 'prop' ? (sumBase > 0 ? base[i] / sumBase : 1 / ids.length)
+            : (budgetFor(ym, id) / Math.max(1, curTotal));
+          const v = Math.round(t * share / 10) * 10;
+          if (v > 0) S.budgets[ym][id] = v; else delete S.budgets[ym][id];
+        });
+        save(true); closeSheet(); rerender();
+        toast('Budget set — ' + inr(sum(Object.keys(S.budgets[ym]), id => S.budgets[ym][id])) + ' across ' + Object.keys(S.budgets[ym]).length + ' categories', 2600);
+      };
+    }
+  });
+}
 function budgetSheet(catId) {
   const ym = curYM, c = catById(catId), cur = budgetFor(ym, catId);
   openSheet({
@@ -2098,7 +2269,7 @@ function budgetSheet(catId) {
     body: `<div class="row" style="margin-bottom:12px"><div class="av" style="background:${hexA(c.color, .14)}">${c.e}</div>
       <div class="grow"><h4>${esc(c.name)}</h4><div class="muted sm">Set ₹0 to remove the budget</div></div></div>
       <div class="field"><label>Monthly limit (₹)</label><input id="bLim" type="number" inputmode="numeric" value="${cur || ''}" placeholder="e.g. 7000"></div>
-      <div class="chips">${[1000, 2500, 5000, 8000, 12000, 20000].map(v => `<span class="chip" data-v="${v}">${inr(v)}</span>`).join('')}</div>
+      <div class="chips" data-nomask>${[1000, 2500, 5000, 8000, 12000, 20000].map(v => `<span class="chip" data-v="${v}">${inr(v)}</span>`).join('')}</div>
       <div class="opt-row" style="border:1px solid var(--border);border-radius:13px;margin-top:14px">
         <div class="grow"><strong>Apply to future months</strong><span>Saves as your default limit</span></div>
         <label class="switch"><input type="checkbox" id="bDef" checked><span class="slider"></span></label></div>`,
@@ -2118,7 +2289,7 @@ function budgetSheet(catId) {
 }
 window.renderBudgets = function () {
   const ym = curYM, ids = uniq([...Object.keys(S.budgets[ym] || {}), ...Object.keys(S.budgets['default'] || {})]);
-  const spendOf = (id) => sum(monthTx(ym).filter(t => t.type === 'expense' && t.cat === id), t => t.amount);
+  const spendOf = (id) => sum(monthTx(ym).filter(t => t.type === 'expense' && t.cat === id && !t.pass), t => t.amount);
   const rows = ids.map(id => ({ id, lim: budgetFor(ym, id), sp: spendOf(id) })).filter(r => r.lim > 0).sort((a, b) => pct(b.sp, b.lim) - pct(a.sp, a.lim));
   const totalLim = sum(rows, r => r.lim), totalSp = sum(rows, r => r.sp);
   const dayN = ym === currentYM() ? periodElapsed(ym) : periodDays(ym), dim = periodDays(ym);
@@ -2126,9 +2297,16 @@ window.renderBudgets = function () {
   const safeToSpend = Math.max(0, totalLim - totalSp);
   const dailyAllow = safeToSpend / Math.max(1, dim - dayN + 1);
   const unbudgeted = catSpend(ym, 'expense').filter(c => !(budgetFor(ym, c.cat.id) > 0));
+  const bsrc = budgetSource(ym);
   $('#s-budgets').innerHTML = `
   ${backBtnBar('Budgets', 'Envelope budgeting for your money')}
   ${monthNav(ym)}
+  <div class="actionsrow" style="margin-top:8px">
+    <button class="btn primary grow" data-act="budgetwiz">📐 Set total budget</button>
+    <button class="btn soft grow" data-act="budgetdefaults">Restore defaults</button>
+  </div>
+  ${bsrc === 'builtin' ? `<div class="banner warn" style="margin-top:10px"><span class="e">📐</span><div><b>You haven\u2019t set your own limits yet</b>
+    <div class="tiny muted">The amounts below are the built-in examples. Tap “Set total budget” for your own, or tap any category to edit just that one.</div></div></div>` : ''}
   <div class="card pad" style="margin-top:8px">
     <div class="between"><div><div class="tiny muted" style="font-weight:700">SPENT</div><div style="font-size:22px;font-weight:800">${money(totalSp)}</div></div>
       <div class="right"><div class="tiny muted" style="font-weight:700">BUDGETED</div><div style="font-size:22px;font-weight:800">${money(totalLim)}</div></div></div>
@@ -2550,6 +2728,268 @@ function loanSheet(i) {
 /* ============================================================================
    18. REIMBURSEMENTS
    ========================================================================== */
+/* ============================================================================
+   Clear & reset — one sheet that says exactly what will be removed
+   ========================================================================== */
+function clearOptions() {
+  const sel = { tx: true, open: false, budgets: false, bills: false, goals: false, loans: false, pass: false, reimb: false };
+  const countPass = () => passList().length;
+  openSheet({
+    title: 'Clear data',
+    body: `<div class="banner warn"><span class="e">⚠️</span><div><b>Nothing is deleted until you press the button below.</b>
+      <div class="tiny muted" style="margin-top:2px">Tick what should go. Everything else stays exactly as it is.</div></div></div>
+      <div class="card pad" style="margin-top:12px">
+        ${[['tx', 'Transactions', S.transactions.length + ' entries', 'Removes the whole history'],
+           ['pass', 'Pass-through entries only', countPass() + ' entries', 'Keeps your own entries'],
+           ['reimb', 'Reimbursable claims', reimbPending() ? 'mark them settled' : 'nothing pending', 'Keeps entries, clears the claim state'],
+           ['open', 'Account opening balances', S.accounts.length + ' accounts', 'Sets every opening balance to zero (accounts stay)'],
+           ['budgets', 'Budget limits', S.categories.filter(c => budgetFor(curYM, c.id) > 0).length + ' categories', 'Removes limits for ' + monLabel(curYM, 1) + ' and saved defaults'],
+           ['bills', 'Bills & subscriptions', S.recurring.length + ' items', 'Stops future auto-entries'],
+           ['goals', 'Goals & saved amounts', S.goals.length + ' goals', 'Clears targets and progress'],
+           ['loans', 'Loans & EMI', (S.loans || []).length + ' loans', 'Removes tracked loans']]
+          .map(([k, label, note, sub]) => `<div class="opt-row"><div class="grow"><strong>${label}</strong><span>${note} · ${sub}</span></div>
+            <label class="switch"><input type="checkbox" data-cl="${k}" ${sel[k] ? 'checked' : ''}><span class="slider"></span></label></div>`).join('')}
+      </div>
+      <div class="tiny muted" id="clSummary" style="margin-top:10px"></div>
+      ${S.settings.sheetId ? `<div class="banner" style="margin-top:12px"><span class="e">☁️</span><div>Your Google Sheet keeps a copy of the old data until you sync. You will be asked right after.</div></div>` : ''}`,
+    foot: `<button class="btn grow" data-x="c">Cancel</button><button class="btn danger grow" data-cl-go="1">Clear selected</button>`,
+    onMount(b, f) {
+      const sum2 = () => {
+        const got = Object.keys(sel).filter(k => sel[k]);
+        const n = [];
+        if (sel.tx) n.push(S.transactions.length + ' transactions');
+        if (sel.pass) n.push(countPass() + ' pass-through entries');
+        if (sel.open) n.push('all opening balances zeroed');
+        if (sel.budgets) n.push('every budget limit removed');
+        if (sel.bills) n.push(S.recurring.length + ' bills');
+        if (sel.goals) n.push(S.goals.length + ' goals');
+        if (sel.loans) n.push((S.loans || []).length + ' loans');
+        $('#clSummary').innerHTML = got.length ? 'Will change: <b>' + n.join(' · ') + '</b>' : '<b>Nothing ticked.</b>';
+        const btn = $('[data-cl-go]', f);
+        btn.disabled = !got.length; btn.style.opacity = got.length ? '' : .5;
+        return got.length;
+      };
+      $$('[data-cl]', b).forEach(i => i.onchange = () => { sel[i.dataset.cl] = i.checked; sum2(); });
+      sum2();
+      $('[data-x=c]', f).onclick = () => backSheet();
+      $('[data-cl-go]', f).onclick = () => { if (!sum2()) return; closeSheet(); setTimeout(() => runClear(sel), 120); };
+    }
+  });
+}
+
+function runClear(sel) {
+  const bits = [];
+  if (sel.tx) { bits.push(S.transactions.length + ' transactions'); S.transactions = []; }
+  else if (sel.pass) { const n = passList().length; bits.push(n + ' pass-through entries'); S.transactions = S.transactions.filter(t => !t.pass); }
+  if (sel.reimb) { S.transactions.forEach(t => { if (t.reimb) t.reimb = 0; }); bits.push('reimbursement claims'); }
+  if (sel.open) { S.accounts.forEach(a => { a.open = 0; }); bits.push('opening balances'); }
+  if (sel.budgets) { S.budgets = {}; bits.push('budget limits'); }
+  if (sel.bills) { bits.push(S.recurring.length + ' bills'); S.recurring = []; }
+  if (sel.goals) { bits.push(S.goals.length + ' goals'); S.goals = []; }
+  if (sel.loans) { bits.push((S.loans || []).length + ' loans'); S.loans = []; }
+  S.meta.rev = (S.meta.rev || 0) + 1;
+  save(true); rerender();
+  toast('Cleared ' + bits.join(', '), 2800);
+  offerSheetPush();
+}
+
+/* After a destructive change the Sheet still holds the old snapshot and a later
+   merge would bring it all back — so always offer the overwrite. */
+function offerSheetPush() {
+  if (!G.ready || !S.settings.sheetId) return;
+  confirmSheet('Send this to Google Drive?',
+    'Your Sheet still has the previous copy. Sync now to overwrite it, or keep it as a safety backup and stay local.',
+    'Sync now', () => { G_.push(true).then(() => toast('Sheet updated'), e => toast(e.message || 'Sync failed')); });
+}
+
+function freshStartConfirm() {
+  confirmSheet('Fresh start — erase everything?',
+    'Removes <b>all</b> transactions, accounts, categories, budgets, bills, goals, loans and custom fields on this phone, then walks you through setting up payment modes, categories and a budget again.'
+    + (S.settings.sheetId ? ' <br><br>Your Google Sheet is not touched yet — you will be asked to update it at the end.' : ''),
+    'Erase & set up', () => {
+      Store.del(KEY);
+      S = blankStateObject();
+      S.settings = Object.assign({}, DEFAULT_SETTINGS, { custom: Object.assign({}, DEFAULT_CUSTOM), onboarded: true, demo: false });
+      S.accounts = []; S.categories = []; S.budgets = {};
+      save(true); rerender();
+      toast('Everything cleared — let us set it up');
+      setTimeout(() => setupWizard({ fresh: true }), 250);
+    });
+}
+
+/* ============================================================================
+   Guided setup — payment modes -> categories -> budget -> backup
+   ========================================================================== */
+function setupWizard(opts) {
+  opts = opts || {};
+  let step = 0;
+  const TYPES = { bank: '🏦 Bank', cash: '💵 Cash', wallet: '📱 Wallet / UPI', credit: '💳 Credit card', investment: '📈 Investment', loan: '🏧 Loan' };
+  const EMOJI = { bank: '🏦', cash: '💵', wallet: '📱', credit: '💳', investment: '📈', loan: '🏧' };
+  const accs = [{ name: 'Salary Account', type: 'bank', open: 0 }, { name: 'PhonePe / UPI', type: 'wallet', open: 0 }, { name: 'Cash', type: 'cash', open: 0 }];
+  const picked = { catSet: 'recommended', total: 40000, mode: 'even', clientId: S.settings.clientId || '' };
+  const ESSENTIALS = ['c_rent', 'c_groc', 'c_food', 'c_metro', 'c_net', 'c_home', 'c_misc', 'i_sal', 'i_reimb', 'i_cash'];
+  const WEIGHT = { c_rent: 3, c_groc: 2, c_food: 1.5, c_metro: 1, c_home: 2, c_misc: 1 };
+
+  const accRows = () => accs.map((a, i) => `<div class="row" style="gap:8px;align-items:flex-end;margin-bottom:8px">
+    <div class="grow"><div class="tiny muted">Name</div><input value="${esc(a.name)}" data-acc-name="${i}" placeholder="e.g. HDFC Bank"></div>
+    <div style="width:104px"><div class="tiny muted">Mode</div><select data-acc-type="${i}">${Object.entries(TYPES).map(([k, v]) => `<option value="${k}" ${a.type === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+    <div style="width:88px"><div class="tiny muted">Opening</div><input type="number" inputmode="numeric" value="${a.open || ''}" data-acc-open="${i}" placeholder="0"></div>
+    <button class="btn sm soft" data-acc-del="${i}" ${accs.length < 2 ? 'disabled' : ''}>✕</button></div>`).join('');
+
+  const steps = [
+    () => `<h3 style="margin-bottom:4px">1 · Payment modes</h3>
+      <div class="muted sm" style="margin-bottom:10px">The accounts money moves through. Add the ones you actually use — rename or remove them later under Accounts.</div>
+      <div class="chips" style="margin-bottom:12px">
+        <span class="chip" data-preset="dev">Bengaluru dev set</span>
+        <span class="chip" data-preset="card">+ Credit card</span>
+        <span class="chip" data-preset="inv">+ Investment</span>
+        <span class="chip" data-preset="upi">+ Second UPI</span></div>
+      <div class="card pad">${accRows()}<button class="btn soft block" data-acc-add="1">+ Add another</button></div>
+      <div class="banner" style="margin-top:12px"><span class="e">💡</span><div>Opening balance is the money sitting in that account <b>right now</b>. Leave 0 if you would rather record entries.</div></div>`,
+    () => `<h3 style="margin-bottom:4px">2 · Categories</h3>
+      <div class="muted sm" style="margin-bottom:10px">Categories power budgets and charts. Pick a starting set — every one stays editable.</div>
+      ${[['recommended', 'Recommended India set', DEFAULT_CATS.length + ' categories — UPI, metro, Swiggy, SIPs, cloud tools, home transfers'],
+         ['essentials', 'Essentials only', ESSENTIALS.length + ' categories — rent, groceries, food, travel, home, salary'],
+         ['none', 'Start empty', 'I will create my own categories from scratch']]
+        .map(([k, t, d]) => `<button class="card pad block" style="text-align:left;margin-bottom:10px;border-color:${picked.catSet === k ? 'var(--accent)' : 'var(--border)'}" data-catset="${k}">
+          <div class="row"><div class="grow"><b>${t}</b><div class="tiny muted">${d}</div></div><span class="tag ${picked.catSet === k ? 'p' : ''}">${picked.catSet === k ? 'selected' : ''}</span></div></button>`).join('')}`,
+    () => `<h3 style="margin-bottom:4px">3 · Monthly budget</h3>
+      <div class="muted sm" style="margin-bottom:10px">Optional. One number for the whole month — RupeeFlow spreads it across your categories.</div>
+      <div class="field"><label>Total monthly budget (₹)</label>
+        <input id="wzTotal" type="number" inputmode="numeric" value="${picked.total || ''}" placeholder="e.g. 40000">
+        <div class="chips" data-nomask>${[15000, 25000, 40000, 60000, 100000].map(v => `<span class="chip" data-wz="${v}">${inr(v)}</span>`).join('')}
+          <span class="chip" data-wz="0">Skip for now</span></div></div>
+      <div class="field"><label>How should it be split?</label>
+        <div class="chips" id="wzMode">
+          <span class="chip ${picked.mode === 'even' ? 'on' : ''}" data-m="even">Evenly</span>
+          <span class="chip ${picked.mode === 'fixed' ? 'on' : ''}" data-m="fixed">Weight essentials higher</span></div></div>
+      <div class="tiny muted" id="wzPreview"></div>`,
+    () => `<h3 style="margin-bottom:4px">4 · Backup (optional)</h3>
+      <div class="muted sm" style="margin-bottom:10px">RupeeFlow writes everything into a Google Sheet in your own Drive. Free, no server, and switching phones takes one tap.</div>
+      <div class="field"><label>Google OAuth Client ID (can be added later in Settings → Drive Sync)</label>
+        <input id="wzCid" value="${esc(picked.clientId)}" placeholder="123456-abc.apps.googleusercontent.com"></div>
+      <div class="card pad" style="background:var(--surface2);box-shadow:none"><div class="tiny" style="line-height:1.6">
+        <b>One-time setup (3 min):</b><br>1. Google Cloud Console → Credentials → Create OAuth client ID → Web application<br>
+        2. Add this app's URL to Authorised JavaScript origins<br>3. Enable Google Sheets API + Drive API<br>4. Paste the Client ID here</div></div>`];
+
+  const preview = () => {
+    const el = $('#wzPreview'); if (!el) return;
+    const t = Math.max(0, +(($('#wzTotal') || {}).value || 0));
+    if (!t) { el.innerHTML = 'No budget for now — add one any time from Home → Edit budget.'; return; }
+    const cats = (picked.catSet === 'essentials' ? DEFAULT_CATS.filter(c => ESSENTIALS.includes(c.id)) : DEFAULT_CATS).filter(c => c.type === 'expense');
+    const weights = cats.map(c => picked.mode === 'fixed' ? (WEIGHT[c.id] || 1) : 1);
+    const tot = weights.reduce((a, b) => a + b, 0) || 1;
+    const top = cats.map((c, i) => [c.name, Math.round(t * weights[i] / tot / 10) * 10]).filter(x => x[1] > 0).slice(0, 4);
+    el.innerHTML = 'Roughly: ' + top.map(x => esc(x[0]) + ' ' + inr(x[1])).join(' · ') + (cats.length > 4 ? ' …' : '');
+  };
+
+  const render = () => {
+    $('#sheetTitle').textContent = 'Set up RupeeFlow · ' + (step + 1) + ' of 4';
+    $('#sheetBody').innerHTML = steps[step]();
+    $('#sheetFoot').style.display = 'flex';   /* openSheet hid it: we filled the foot ourselves */
+    $('#sheetFoot').innerHTML = `<button class="btn grow" data-wz-x="skip">${step === 3 ? 'Finish' : 'Skip'}</button>
+      ${step > 0 ? '<button class="btn" data-wz-x="back">Back</button>' : ''}
+      <button class="btn primary grow" data-wz-x="next">${step === 3 ? 'Finish & connect' : 'Continue'}</button>`;
+    bind(); preview();
+  };
+  const collect = () => {
+    if (step === 0) {
+      $$('[data-acc-name]').forEach(i => { accs[+i.dataset.accName].name = i.value.trim(); });
+      $$('[data-acc-type]').forEach(i => { accs[+i.dataset.accType].type = i.value; });
+      $$('[data-acc-open]').forEach(i => { accs[+i.dataset.accOpen].open = round2(+i.value || 0); });
+    }
+    if (step === 2) { const t = $('#wzTotal'); if (t) picked.total = Math.max(0, +t.value || 0); }
+    if (step === 3) { const c = $('#wzCid'); if (c) picked.clientId = c.value.trim(); }
+  };
+  const writeAll = () => {
+    const palette = ['#6355F5', '#0E9F6E', '#F59E0B', '#0891B2', '#E11D48', '#8B5CF6', '#EC4899', '#16A34A'];
+    const used = accs.filter(a => a.name);
+    S.accounts = used.map((a, i) => ({ id: uid('a'), name: a.name, type: a.type, e: EMOJI[a.type] || '🏦', color: palette[i % palette.length], open: a.open || 0, note: '' }));
+    if (picked.catSet === 'none') { if (!S.categories.length) S.categories = []; }
+    else {
+      const list = picked.catSet === 'essentials' ? DEFAULT_CATS.filter(c => ESSENTIALS.includes(c.id)) : DEFAULT_CATS;
+      S.categories = list.map(c => ({ ...c }));
+    }
+    S.budgets = {};
+    if (picked.total > 0) {
+      const cats = S.categories.filter(c => c.type === 'expense');
+      if (cats.length) {
+        const weights = cats.map(c => picked.mode === 'fixed' ? (WEIGHT[c.id] || 1) : 1);
+        const tot = weights.reduce((a, b) => a + b, 0) || 1;
+        const b = {};
+        cats.forEach((c, i) => { const v = Math.round(picked.total * weights[i] / tot / 10) * 10; if (v > 0) b[c.id] = v; });
+        S.budgets['default'] = b; S.budgets[curYM] = { ...b };
+      }
+    }
+    S.settings.onboarded = true; S.settings.demo = false;
+    if (picked.clientId) S.settings.clientId = picked.clientId;
+    S.meta.rev = (S.meta.rev || 0) + 1;
+    save(true);
+  };
+  const finish = (connect) => {
+    collect(); writeAll();
+    closeSheet(); applyTheme(); go('home'); rerender();
+    toast('Setup done — ' + S.accounts.length + ' payment modes, ' + S.categories.length + ' categories', 2600);
+    if (connect && picked.clientId) setTimeout(() => G_.connect(picked.clientId).then(() => G_.push(true)).then(() => toast('Backed up to your Sheet')).catch(e => toast(e.message || 'Could not connect')), 400);
+    else if (connect) setTimeout(() => toast('Add your Client ID in Settings → Drive Sync when ready'), 900);
+    offerSheetPush();
+  };
+  function bind() {
+    $$('[data-acc-add]').forEach(b2 => b2.onclick = () => { collect(); accs.push({ name: '', type: 'bank', open: 0 }); render(); });
+    $$('[data-acc-del]').forEach(b2 => b2.onclick = () => { collect(); accs.splice(+b2.dataset.accDel, 1); render(); });
+    $$('[data-preset]').forEach(c => c.onclick = () => { collect();
+      const p = c.dataset.preset;
+      if (p === 'dev') accs.splice(0, accs.length, { name: 'Salary Account', type: 'bank', open: 0 }, { name: 'PhonePe / UPI', type: 'wallet', open: 0 }, { name: 'Cash', type: 'cash', open: 0 });
+      if (p === 'card') accs.push({ name: 'Credit Card', type: 'credit', open: 0 });
+      if (p === 'inv') accs.push({ name: 'Investments', type: 'investment', open: 0 });
+      if (p === 'upi') accs.push({ name: 'Second UPI', type: 'wallet', open: 0 });
+      render(); });
+    $$('[data-catset]').forEach(b2 => b2.onclick = () => { picked.catSet = b2.dataset.catset; render(); });
+    $$('[data-wz]').forEach(c => c.onclick = () => { const i = $('#wzTotal'); if (i) i.value = c.dataset.wz === '0' ? '' : c.dataset.wz; picked.total = +c.dataset.wz || 0; preview(); });
+    $$('#wzMode .chip').forEach(c => c.onclick = () => { picked.mode = c.dataset.m; $$('#wzMode .chip').forEach(x => x.classList.toggle('on', x === c)); preview(); });
+    const t = $('#wzTotal'); if (t) t.oninput = () => { picked.total = Math.max(0, +t.value || 0); preview(); };
+    $$('[data-wz-x]').forEach(b2 => b2.onclick = () => {
+      collect();
+      const k = b2.dataset.wzX;
+      if (k === 'back') { step--; return render(); }
+      const next = k === 'next';
+      if (step === 0 && next && !accs.filter(a => a.name).length) { toast('Add at least one payment mode'); return; }
+      if (step < 3) { step++; return render(); }
+      finish(next);
+    });
+  }
+  openSheet({ title: 'Set up RupeeFlow', body: '', foot: '', onMount() { } });
+  render();
+}
+
+/* ---- Pass-through money: someone else's money you are moving ---------------- */
+window.renderPass = function () {
+  const rows = passStats();
+  const held = passHeld();
+  const got = sum(S.transactions.filter(t => t.pass && t.type === 'income'), t => t.amount);
+  const paid = sum(S.transactions.filter(t => t.pass && t.type === 'expense'), t => t.amount);
+  const recent = passList().slice().sort(sortTxDesc).slice(0, 40);
+  $('#s-pass').innerHTML = `
+  ${backBtnBar('Pass-through money', 'Money you move for someone else — never counted as yours')}
+  <div class="card pad">
+    <div class="tiny muted" style="font-weight:700">YOU ARE HOLDING</div>
+    <div style="font-size:26px;font-weight:800">${money(held)}</div>
+    <div class="between" style="margin-top:10px">
+      <span class="sm">Received <b class="pos">${money(got)}</b></span>
+      <span class="sm">Spent for them <b>${money(paid)}</b></span></div>
+    <div class="sep"></div>
+    <div class="tiny muted">These entries still move your real account balances, but they are skipped in income, expenses, budgets, savings rate and analytics.</div>
+  </div>
+  ${rows.length ? `<div class="section"><div class="section-head"><h2>By person</h2></div>
+    <div class="card pad">${rows.map(r => `<div class="between" style="padding:9px 0;border-bottom:1px solid var(--border)">
+      <div><b>${esc(r.who)}</b><div class="tiny muted">${r.count} ${r.count === 1 ? 'entry' : 'entries'}${r.open ? ` · ${r.open} open` : ' · all settled'}</div></div>
+      <div class="right"><b>${money(r.held)}</b><div class="tiny muted">in ₹ · got ${money(r.got)} / paid ${money(r.paid)}</div></div></div>`).join('')}
+      ${rows.some(r => r.open) ? `<button class="btn soft block" style="margin-top:10px" data-act="passsettleall">✅ Settle everything open</button>` : ''}</div></div>` : ''}
+  <div class="section"><div class="section-head"><h2>Entries</h2><button class="link" data-nav="records">All records</button></div>
+    <div class="card">${recent.length ? recent.map(t => txRow(t)).join('') : `<div class="pad muted sm">No pass-through entries yet. Add an entry and switch on <b>🤝 Pass-through</b>, or pick either type in the Add sheet.</div>`}</div></div>
+  <div class="section"><div class="card pad"><div class="tiny muted">Open the Add sheet and flip <b>🤝 Pass-through</b> when a spend or transfer is not yours. Mark it settled once you hand back or close the balance.</div></div></div>`;
+};
+
 window.renderReimb = function () {
   const pend = S.transactions.filter(t => t.reimb === 1).sort(sortTxDesc);
   const settled = S.transactions.filter(t => t.reimb === 2).sort(sortTxDesc).slice(0, 12);
@@ -2583,7 +3023,7 @@ window.renderReimb = function () {
    ========================================================================== */
 function csvFor(list) {
   const cf = S.customFields || [];
-  const head = ['Date', 'Time', 'Type', 'Category', 'Amount', 'Account', 'To Account', 'Note', 'Tags', 'Reimbursement', ...cf.map(f => f.label)];
+  const head = ['Date', 'Time', 'Type', 'Category', 'Amount', 'Account', 'To Account', 'Note', 'Tags', 'Reimbursement', 'Pass-through', ...cf.map(f => f.label)];
   const rows = list.map(t => [t.date, t.time || '', t.type, catById(t.cat).name, t.amount, accById(t.acc).name, t.to ? accById(t.to).name : '', t.note || '', (t.tags || []).join(' '), t.reimb === 1 ? 'due' : t.reimb === 2 ? 'settled' : '', ...cf.map(f => (t.fields || {})[f.key] || '')]);
   return [head, ...rows].map(r => r.map(v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(',')).join('\n');
 }
@@ -2914,15 +3354,15 @@ const G_ = {
   },
   tables(rev_) {
     const T = [];
-    T.push({ tab: 'Transactions', rows: [['Date', 'Time', 'Type', 'Category', 'Amount', 'Account', 'To', 'Note', 'Tags', 'Reimbursement', 'ID', 'Updated'],
-      ...S.transactions.slice().sort(sortTxDesc).map(t => [t.date, t.time || '', t.type, catById(t.cat).name, t.amount, accById(t.acc).name, t.to ? accById(t.to).name : '', t.note || '', (t.tags || []).join(' '), t.reimb === 1 ? 'due' : t.reimb === 2 ? 'settled' : '', t.id, new Date(t.updated || Date.now()).toISOString()])] });
+    T.push({ tab: 'Transactions', rows: [['Date', 'Time', 'Type', 'Category', 'Amount', 'Account', 'To', 'Note', 'Tags', 'Reimbursement', 'Pass-through', 'ID', 'Updated'],
+      ...S.transactions.slice().sort(sortTxDesc).map(t => [t.date, t.time || '', t.type, catById(t.cat).name, t.amount, accById(t.acc).name, t.to ? accById(t.to).name : '', t.note || '', (t.tags || []).join(' '), t.reimb === 1 ? 'due' : t.reimb === 2 ? 'settled' : '', t.pass ? passWhoOf(t) + (t.pass === 2 ? ' (settled)' : '') : '', t.id, new Date(t.updated || Date.now()).toISOString()])] });
     T.push({ tab: 'Accounts', rows: [['Account', 'Type', 'Opening', 'Current', 'Note'], ...S.accounts.map(a => [a.name, a.type, a.open, round2(accBalance(a.id)), a.note || ''])] });
     T.push({ tab: 'Categories', rows: [['Category', 'Type', 'Fixed?', 'Entries', `Spent (${monLabel(curYM, 1)})`], ...S.categories.map(c => [c.name, c.type, c.kind === 'fixed' ? 'yes' : '', S.transactions.filter(t => t.cat === c.id).length, sum(monthTx(curYM).filter(t => t.cat === c.id), t => t.amount)])] });
     T.push({ tab: 'Budgets', rows: [['Category', `Limit (${monLabel(curYM, 1)})`, 'Default limit', 'Spent', 'Used %'], ...uniq([...Object.keys(S.budgets[curYM] || {}), ...Object.keys(S.budgets['default'] || {})]).map(id => { const sp = sum(monthTx(curYM).filter(t => t.type === 'expense' && t.cat === id), t => t.amount); return [catById(id).name, budgetFor(curYM, id), (S.budgets['default'] || {})[id] || '', sp, pct(sp, budgetFor(curYM, id)).toFixed(1)]; })] });
     T.push({ tab: 'Recurring', rows: [['Name', 'Type', 'Amount', 'Category', 'Account', 'Day', 'Active'], ...S.recurring.map(r => [r.name, r.type, r.amount, catById(r.cat).name, accById(r.acc).name, r.day, r.active === false ? 'no' : 'yes'])] });
     T.push({ tab: 'Goals', rows: [['Goal', 'Target', 'Saved', 'Progress %', 'Note'], ...S.goals.map(g => [g.name, g.target, g.saved, pct(g.saved, g.target).toFixed(1), g.note || ''])] });
     const t = totals(monthTx(curYM));
-    T.push({ tab: 'Summary', rows: [['RupeeFlow summary', monLabel(curYM)], ['Income', t.inc], ['Expenses', t.exp], ['Saved', t.net], ['Savings rate %', t.rate.toFixed(1)], ['Net worth', round2(netWorth())], ['Liquid balance', round2(liquid())], ['Reimbursements pending', reimbPending()], [], ['Generated', new Date().toLocaleString('en-IN')], ['Owner', S.settings.email || 'local user']] });
+    T.push({ tab: 'Summary', rows: [['RupeeFlow summary', monLabel(curYM)], ['Income', t.inc], ['Expenses', t.exp], ['Saved', t.net], ['Savings rate %', t.rate.toFixed(1)], ['Net worth', round2(netWorth())], ['Liquid balance', round2(liquid())], ['Reimbursements pending', reimbPending()], ['Pass-through held for others', round2(passHeld())], [], ['Generated', new Date().toLocaleString('en-IN')], ['Owner', S.settings.email || 'local user']] });
     /* Google Sheets allows max 50,000 characters per cell, so the JSON restore
        payload is chunked across rows (first row is the format marker). */
     const json = JSON.stringify(snapshot());
@@ -3293,6 +3733,7 @@ window.renderMore = function () {
     ['goals', '🎯', 'Goals', `${S.goals.length} goals`],
     ['loans', '🏦', 'Loans & EMI', `${(S.loans || []).length} tracked`],
     ['reimb', '🧾', 'Reimburse', reimbPending() ? inrC(reimbPending()) + ' due' : 'all clear'],
+    ['pass', '🤝', 'Pass-through', passHeld() ? inrC(passHeld()) + ' held' : (passList().length ? 'settled' : 'none')],
     ['reports', '📄', 'Reports', 'PDF / CSV'],
     ['sync', '☁️', 'Drive Sync', S.settings.sheetId ? 'linked' : 'setup'],
     ['themes', '🎨', 'Themes', themeById(S.settings.theme).name.split(' ')[0]],
@@ -3326,6 +3767,7 @@ window.renderMore = function () {
       <div class="kv"><span>Saved</span><b>${money(t.net)}</b></div>
       <div class="kv"><span>Fixed commitments</span><b>${money(sum(S.recurring.filter(r => r.active && r.type === 'expense'), r => r.amount))}</b></div>
       <div class="kv"><span>Reimbursements pending</span><b>${money(reimbPending())}</b></div>
+      <div class="kv"><span>Pass-through held for others</span><b>${money(passHeld())}</b></div>
       <div class="kv"><span>Top category</span><b>${catSpend(curYM, 'expense')[0] ? esc(catSpend(curYM, 'expense')[0].cat.name) + ' · ' + inrC(catSpend(curYM, 'expense')[0].amt) : '—'}</b></div>
     </div>
   </div>
@@ -3408,6 +3850,8 @@ window.renderSettings = function () {
       <div class="opt-row"><div class="grow"><strong>Monthly report & CSV</strong><span>Export what you need</span></div><button class="btn sm soft" data-nav="reports">Open</button></div>
       <div class="opt-row"><div class="grow"><strong>Google Drive sync</strong><span>${S.settings.sheetId ? 'Sheet linked' : 'Not set up'}</span></div><button class="btn sm soft" data-nav="sync">Open</button></div>
       <div class="opt-row"><div class="grow"><strong>Load starter kit again</strong><span>Restore the Bengaluru-dev sample data</span></div><button class="btn sm soft" data-act="reloaddemo">Load</button></div>
+      <div class="opt-row"><div class="grow"><strong>Clear data…</strong><span>Pick exactly what to remove — entries, amounts, budgets, bills, goals</span></div><button class="btn sm danger" data-act="clearopts">Choose</button></div>
+      <div class="opt-row"><div class="grow"><strong>Fresh start (guided)</strong><span>Erase everything and set up payment modes, categories and budget step by step</span></div><button class="btn sm danger" data-act="freshstart">Start</button></div>
       <div class="opt-row"><div class="grow"><strong>Start blank</strong><span>Wipe entries, keep categories & accounts</span></div><button class="btn sm danger" data-act="blankstate">Reset</button></div>
       <div class="opt-row"><div class="grow"><strong>Erase everything</strong><span>Delete all local data (Drive sheet stays untouched)</span></div><button class="btn sm danger" data-act="erase">Erase</button></div>
     </div>
@@ -3440,7 +3884,7 @@ window.renderSettings = function () {
     toast(on ? 'Launch opens your last profile' : 'Opens on ' + pick.name + ' at launch', 2600);
     renderSettings();
   };
-  $('#sHide').onchange = e => { S.settings.hideBalances = e.target.checked; save(true); rerender(); };
+  $('#sHide').onchange = e => { S.settings.hideBalances = e.target.checked; save(true); watchMask(); rerender(); };
 };
 /* --------------------------- PIN lock ------------------------------------- */
 function hashPin(p) { let h = 5381; for (const c of 'rf' + p) h = ((h << 5) + h + c.charCodeAt(0)) >>> 0; return h.toString(36); }
@@ -3470,6 +3914,7 @@ function switchProfile(id, pin, silent) {
   Store.set(CURPROF_KEY, id);
   if (typeof window.__rfTeardownProfile === 'function') { try { window.__rfTeardownProfile(); } catch (e) { } }
   loadState();
+  watchMask();                     /* keep amounts masked on every later DOM write */
   upgradeState();
   curYM = currentYM();
   if (target.decoy) { S.settings.autoSync = false; S.settings.syncGuard = true; }
@@ -3765,6 +4210,24 @@ document.addEventListener('click', (ev) => {
       S.settings.sheetId = ''; save(true);
       try { await G_.ensure(); await G_.push(false); toast('New sheet created'); rerender(); } catch (e) { toast('Failed: ' + e.message); }
     });
+    case 'clearopts': return clearOptions();
+    case 'freshstart': return freshStartConfirm();
+    case 'setupwizard': return setupWizard();
+    case 'passsettle': {
+      const t = S.transactions.find(x => x.id === id); if (!t) return;
+      t.pass = 2; t.updated = Date.now(); save(); closeSheet(); rerender();
+      return toast('Marked settled — still excluded from your money');
+    }
+    case 'passsettleall': return confirmSheet('Settle all pass-through entries?',
+      'Every open pass-through entry is marked settled. The money stays out of your income and expenses; the “holding” figure drops to zero.',
+      'Settle all', () => {
+        let n = 0; for (const t of S.transactions) if (t.pass === 1) { t.pass = 2; t.updated = Date.now(); n++; }
+        save(); rerender(); toast(n + ' entries settled');
+      });
+    case 'budgetwiz': return budgetWizard();
+    case 'budgetdefaults': return confirmSheet('Restore example budgets?',
+      'This replaces your per-category limits for <b>' + esc(monLabel(curYM, 1)) + '</b> with the built-in example amounts, and clears your saved defaults.',
+      'Restore', () => { delete S.budgets[curYM]; delete S.budgets['default']; save(true); rerender(); toast('Example budgets restored'); });
     case 'apierrhelp': return apiHelpSheet({ message: G.msg });
     case 'profiles': return profilesSheet();
     case 'decoyboot': {
@@ -4084,8 +4547,9 @@ function installAPI() {
     setPref: (k, v) => {
       /* top-level app settings (mode, theme, amoled, …) go to S.settings; everything else is a
          customisation pref. `pin` is deliberately excluded — it must go through the hasher. */
-      const TOP = ['mode', 'theme', 'amoled', 'reduceMotion', 'monoNumbers', 'name', 'workCity', 'homeCity', 'demo', 'lockOnOpen', 'autoSync'];
+      const TOP = ['mode', 'theme', 'amoled', 'reduceMotion', 'monoNumbers', 'name', 'workCity', 'homeCity', 'demo', 'lockOnOpen', 'autoSync', 'hideBalances'];
       if (TOP.includes(k)) S.settings[k] = v; else S.settings.custom[k] = v;
+      if (k === 'hideBalances') watchMask();
       if (k === 'cycleStart') curYM = currentYM();
       save(true); applyTheme(); renderNav(); rerender(); return v;
     },
@@ -4528,7 +4992,7 @@ function renderCustomize() {
     const k = el.dataset.fmt;
     el.onchange = () => {
       const v = el.type === 'checkbox' ? el.checked : el.value;
-      if (['hideBalances', 'monoNumbers', 'reduceMotion'].includes(k)) { S.settings[k] = v; save(true); applyTheme(); if (k === 'hideBalances') { toast('Balances ' + (v ? 'hidden' : 'visible')); return go(route, true); } }
+      if (['hideBalances', 'monoNumbers', 'reduceMotion'].includes(k)) { S.settings[k] = v; watchMask(); save(true); applyTheme(); if (k === 'hideBalances') { toast('Balances ' + (v ? 'hidden' : 'visible')); return go(route, true); } }
       else {
         S.settings.custom[k] = (k === 'cycleStart' || k === 'hue') ? +v : v;
         if (k === 'cycleStart') curYM = currentYM();      /* re-base the whole app onto the new cycle */

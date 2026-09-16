@@ -3,6 +3,48 @@
 All notable changes to RupeeFlow. The build stamp shown in **Settings → About** matches the entries here,
 so you can confirm at a glance which version your phone is running.
 
+## 1.4.3 — 2026-09-16  ·  build `1.4.3+2026-09-16.1`
+
+Three things the app got wrong that a user could see, fixed at the root — plus the money rule that was missing.
+
+- **Hide balances now hides *every* amount, everywhere.** Masking used to be applied call-site by call-site
+  (`money()` here, `M()` there) and newer screens were written with plain `inr()` — which is why hiding the
+  totals still left "Rent ₹12,000", the KPI pills, the spend bars, the bills list and the reports table in
+  plain sight. Masking is now a single pass over the rendered DOM (inputs, the keypad and anything you are
+  typing stay readable), it runs on *every* render path including modal sheets, and a MutationObserver keeps
+  masking anything written later — charts, rewritten cards, toasts. `₹1.06L`/`₹31k` compact forms are covered
+  too. Navigation through `RF.go()` used to skip the mask entirely; that hole is closed.
+- **The ₹93,200 budget is no longer a mystery number.** It was simply the sum of the per-category limits —
+  but nothing said so and the only editor lived on the Budgets screen. The Home card now states its own
+  source (your month / your defaults / the built-in **example limits**, with that badge visible when nothing
+  has been set) and offers **Edit budget** right on the card: one total, spread by last month's spending,
+  evenly, or keeping the current split, with a live preview and per-category shortcuts. The Budgets screen
+  gained **Set total budget** and **Restore defaults**.
+- **Clear, reset and start over.** A single **Settings → Data & backup → Clear data…** sheet with eight
+  ticks — transactions, pass-through entries only, reimbursement claims, account opening balances, budget
+  limits, bills, goals, loans — a live "will change" summary, and a cancel that changes nothing. Clearing
+  anything offers to overwrite the Sheet right after, because otherwise the next merge brings it back.
+- **Fresh start (guided).** Erase everything, then a four-step wizard puts it back together: **payment
+  modes** (with presets, rename/add/remove, opening balances) → **categories** (30-set / 10 essentials /
+  empty) → **budget** (total + how to split it) → **Drive backup**. Nothing is left half-blank.
+- **Pass-through money — someone else's money is no longer your income or expense.** When your father sends
+  money for his own rent, mark the entry **🤝 Pass-through** and name the person. Balances still move
+  (the money is really in your account) but the entry is excluded from income, expenses, category spend,
+  budgets, savings rate, charts and the forecast. **More → Pass-through** shows what you hold per person,
+  lets you settle single entries or everything, Records tags them and offers a filter chip, and the CSV
+  export plus the Drive sheet carry the person's name. `pass: 1` = open, `pass: 2` = settled (still excluded).
+- Bugs found and fixed while validating the above: the pass-through toggle re-rendered the add sheet without
+  re-binding its handlers (the keypad went dead after flipping the switch); `RF.setPref('hideBalances')` wrote
+  to custom prefs instead of settings, so the documented API could not hide anything; the pass-through Home
+  widget was never added to the widget order; Cancel did nothing in the clear sheet and the budget wizard;
+  a long sheet pushed its footer button off-screen (flexbox `min-height:auto`) — while the wizard footer was
+  additionally left `display:none`; settling a pass-through entry left its stale detail sheet open.
+- New suite `tests/options.js` — **74 tests** covering all of it: no amount on any of the 15 screens while
+  hidden (plus keypad/toast/compact-number cases), budget source detection and editing with reload
+  persistence, every clear option on its own, the full guided wizard including "start empty" and skipped
+  backup, and pass-through against totals, category spend, transfers, budgets, stats, settling, records,
+  CSV and the Drive sheet. Totals now **308 tests** across nine suites.
+
 ## 1.4.2 — 2026-09-13  ·  build `1.4.2+2026-09-13.1`
 
 - **Fixed: `INVALID PROPERTIES: UNSUPPORTED LOCALE: EN_IN` — sync could never start.** Creating the
