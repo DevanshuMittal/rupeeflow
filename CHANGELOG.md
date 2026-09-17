@@ -3,6 +3,40 @@
 All notable changes to RupeeFlow. The build stamp shown in **Settings → About** matches the entries here,
 so you can confirm at a glance which version your phone is running.
 
+## 1.4.4 — 2026-09-16  ·  build `1.4.4+2026-09-16.2`
+
+Three follow-ups from using 1.4.3 for real: pass-through needed to handle *several* people, money that
+arrives in either order, and signing in once instead of every time the app opens.
+
+- **Pass-through now works for as many people as you need — and one payment can cover two of them.**
+  Father and Mother each get their own block with their own balance. A single UPI transfer can be
+  **split** between people (`Split between people` in the add sheet): type the shares, the last row
+  always holds the rest, a repeated name is merged instead of losing money, and over-allocating is
+  refused before anything saves. Each person can be renamed (across every entry at once), added
+  without an entry yet, or opened as a **ledger**.
+- **Both orders are handled, because real life is not chronological.** Pay for their medicines before
+  their money arrives and the block flips to **"you are out of pocket"**; record their transfer later
+  and it clears. Nothing becomes your income or expense either way — and the per-person **ledger with
+  a running balance** (−₹6,600 → +₹6,000 → −₹600) makes the swing visible instead of confusing.
+- **Settling is per person.** "Settle 3" on Mother's block closes her share of a shared payment and
+  leaves Father's part open; an entry only counts as fully closed when every share is. Settling never
+  creates an income entry (unlike reimbursements, which do).
+- **Sign in once, stay signed in.** Setting a PIN asks it once and remembers the phone — no PIN at
+  launch, after backgrounding, or after an update. The record is **device-local** (never in your Sheet,
+  never on another phone), is tied to the current PIN, so **changing the PIN asks again**, and each
+  profile (including a decoy) keeps its own. `Lock now` hands the phone over without losing the memory;
+  the toggle in Settings → Security turns the behaviour off for anyone who wants the old every-launch
+  lock. Google gets the same treatment: a linked account re-signs-in silently on launch, on focus and
+  on reconnect, retries quietly every 15 minutes, and refreshes its token every 45 — no second sign-in.
+- Bugs caught by the new tests: renaming a person rewrote the copy of the shares instead of the stored
+  data (the rename looked like it worked and did nothing); `passEl` was read before its declaration in
+  the add sheet (a dead save button with a `Cannot access 'passEl' before initialization` error in the
+  console); the share editor's remainder column needed the same re-bind treatment as the pass toggle.
+- `tests/qa.js` updated for the new sign-in default (setting a PIN remembers the phone; the suite now
+  turns that off to exercise the every-launch lock). `tests/options.js` grew from 74 to **117 tests**
+  (multi-person blocks, splits, negative and positive orderings, per-person settling, rename, share
+  normalisation, sign-in-once, silent reconnect). Totals now **353 tests** across nine suites.
+
 ## 1.4.3 — 2026-09-16  ·  build `1.4.3+2026-09-16.1`
 
 Three things the app got wrong that a user could see, fixed at the root — plus the money rule that was missing.

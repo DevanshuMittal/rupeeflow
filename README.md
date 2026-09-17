@@ -23,7 +23,7 @@ and prints a copyable diagnostic report.
 | **Works offline** | Yes — everything is cached on the phone (PWA installable) |
 | **Backend** | Google Sheets + Drive, called directly from the browser (no server, no fees) |
 | **Currency / FY** | ₹ with Indian digit grouping (₹1,45,000 / ₹1.45L / ₹1.2Cr), April–March |
-| **Tested** | 308 automated tests passing (46 app + 59 customisation + 74 options + 33 profiles/decoy + 31 sheet setup + 23 desktop layout + 19 two-device sync + 13 setup checker + 10 update pipeline) + a 17-assertion CI gate |
+| **Tested** | 353 automated tests passing (48 app + 59 customisation + 117 options + 33 profiles/decoy + 31 sheet setup + 23 desktop layout + 19 two-device sync + 13 setup checker + 10 update pipeline) + a 17-assertion CI gate |
 
 ---
 
@@ -57,6 +57,8 @@ and prints a copyable diagnostic report.
 | `31-passthrough-card.png`, `32-passthrough-screen.png` | Pass-through money — someone else's money, tracked separately |
 | `34-clear-sheet.png`, `35-guided-setup.png`, `36-setup-categories.png` | Clear data and the guided re-setup |
 | `37-home-visible.png`, `38-home-hidden.png` | Hide-balances on/off — nothing leaks either way |
+| `39-passthrough-people.png`, `40-passthrough-ledger.png` | Father and Mother side by side, running balance, out-of-pocket |
+| `41-add-split-pass.png`, `42-signin-once.png` | Splitting one payment between two people · sign in once |
 | `15-customise-layout.png` … `21-customise-dev.png` | Layout, fields, templates, rules, format, theme, dev panel |
 | `22-rule-editor.png`, `23-rule-json.png` | Rule builder + JSON editor |
 | `24-add-sheet-custom.png` | Add sheet with templates + custom fields |
@@ -240,14 +242,32 @@ Install RupeeFlow on the new phone → **More → Drive Sync** → paste the sam
 * Outstanding vs settled, FY total, one-tap **Settle** (also logs the reimbursement as income)
 
 ### Pass-through money (money that isn't yours)
-* Father sends ₹25,000 for his own rent and bills? Flip **🤝 Pass-through** on the entry and name who
-  it belongs to (Father, Mother, a friend, anything you type)
+* Father sends ₹25,000 for his own rent and bills? Flip **🤝 Pass-through** on the entry and pick who
+  it belongs to. Keep as many people as you need — **Father and Mother each get their own block**
+* **One payment can be split between people**: turn on *Split between people*, add Father ₹6,000 and
+  Mother ₹4,000, and the last row always holds the remainder. Over-allocating is refused before it
+  can save, and a repeated name is merged instead of losing money
 * Balances still move — the money really is in your account — but the entry is **left out of your
   income, expenses, category spend, budgets, savings rate and charts**
-* **More → Pass-through** shows what you are holding for each person (received − spent), flags
-  unsettled entries, and settles them one by one or all at once
-* Records tags them ("🤝 Father"), there is a filter chip for them, and both the CSV export and the
-  Drive sheet carry the person's name
+* **Either order works**: pay for their medicines *before* their money arrives and the block shows
+  **"you are out of pocket"**; record their transfer afterwards and it clears. Each person's
+  **ledger** shows every entry with a **running balance**, so −₹6,600 → +₹6,000 → −₹600 is obvious
+* Settle **per person** ("Settle 3" on their block) or everything at once; settling is state, never an
+  income entry
+* **More → Pass-through** holds the per-person blocks, rename, add person, and a one-tap
+  **+ Entry for <person>**. Records tags them ("🤝 Papa + Mother") with a filter chip, and the CSV
+  export plus the Drive sheet write every person with their share
+
+### Sign in once, stay signed in
+* Set a PIN and tick **Remember this phone** — the PIN is asked **once**, then never again: not at
+  launch, not after the app sits in the background, not after an update
+* The memory is stored **on the device only** (never in your Sheet, never on another phone) and is
+  tied to the current PIN, so **changing the PIN asks again**; a decoy profile has its own record
+* **Lock now** hands the phone over instantly without losing the memory; the toggle in
+  *Settings → Security* turns it off if you would rather be asked every time
+* Google: once your Drive account is linked, RupeeFlow re-signs-in **silently** on launch, on focus
+  and on reconnect, retries quietly in the background, and refreshes the token every 45 minutes —
+  you never tap "sign in" twice
 
 ### Clear, reset & start again
 **Settings → Data & backup** gives you one sheet where you tick exactly what goes — transactions,
@@ -300,6 +320,8 @@ Profile (name, work/home city), 4-digit **PIN lock** (asked at launch and after 
 * **Pass-through money is never income or expense** — it only moves account balances
 * **Hide balances hides every amount, everywhere** (including toasts and the Sheet-backed screens);
   only the amount you are typing stays readable
+* A pass-through entry moves balances but belongs to **its person's block**, split or whole — never
+  to your income, expenses, budgets or savings, whichever order the entries arrive in
 * Savings rate = (income − expenses) / income; forecast = daily average × days in month
 * India: 3-digit grouping, lakh/crore compaction, April–March financial year
 
@@ -335,9 +357,9 @@ finance-tracker/
 ├─ tools/                ← bump.js (release stamp) · push.sh (one-command release)
 ├─ screenshots/          ← 27 images (screens, customisation, toast fix, two-device proof)
 └─ tests/
-   ├─ qa.js              ← 46 end-to-end interaction tests (Playwright)
+   ├─ qa.js              ← 48 end-to-end interaction tests (Playwright)
    ├─ custom.js          ← 59 tests for fields / rules / templates / layout / theme / API
-   ├─ options.js         ← 74 tests for hidden balances, editable budgets, clear/reset, pass-through
+   ├─ options.js         ← 117 tests for hidden balances, budgets, clear/reset, pass-through (many people), sign-in-once
    ├─ setupcheck.js      ← 13 tests for the setup checker itself
    ├─ update.js          ← 10 tests proving the in-app update flow works
    ├─ ci-check.js        ← 17-assertion integrity gate used by GitHub Actions
@@ -350,12 +372,12 @@ Run the tests (needs `playwright` + Chromium, and the app served on port 8080):
 ```bash
 python3 -m http.server 8080 &
 node tests/ci-check.js    # integrity gate, no browser   (17 assertions, CI runs this)
-node tests/qa.js          # app behaviour                (46 tests)
+node tests/qa.js          # app behaviour                (48 tests)
 node tests/custom.js      # customisation layer          (59 tests)
 node tests/setupcheck.js  # setup checker behaviour      (13 tests)
 node tests/update.js      # in-app update pipeline       (10 tests — see GITHUB.md §10)
 node tests/twodevice.js   # phone + laptop sync          (19 tests, mocked Google — no credentials)
-node tests/options.js     # hide/budget/clear/pass-through (74 tests)
+node tests/options.js     # hide/budget/clear/pass-through/sign-in (117 tests)
 node tests/profiles.js    # profiles, PIN gate, decoy    (33 tests — proves real data never leaks)
 node tests/desktop.js     # laptop layout, phone intact  (23 tests)
 node tests/sheetsetup.js  # Sheet creation + API errors (31 tests, mocked Google)

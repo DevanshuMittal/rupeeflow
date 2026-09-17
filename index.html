@@ -500,7 +500,7 @@ textarea{min-height:64px;resize:vertical}
 
 /* Bump this on every release — tools/bump.js updates it here and in sw.js.
    The running build is compared against the deployed one to offer in-app updates. */
-const APP_BUILD = '1.4.3+2026-09-16.1';
+const APP_BUILD = '1.4.4+2026-09-16.2';
 
 /* ---------------------------------- 1. utils ------------------------------- */
 const $  = (s, r = document) => r.querySelector(s);
@@ -914,6 +914,7 @@ const PROFILE_KEY = id => (id === 'main' ? KEY : 'rupeeflow.profile.' + id);
 const PROFILES_KEY = 'rupeeflow.profiles.v1';
 const CURPROF_KEY = 'rupeeflow.current.v1';
 const BOOTPROF_KEY = 'rupeeflow.boot.v1';        /* which profile opens on launch */
+const TRUST_KEY = id => 'rupeeflow.trust.' + id;  /* this phone is signed in — stays device-local */
 function profiles() {
   let list = Store.get(PROFILES_KEY, null);
   if (!Array.isArray(list) || !list.length) {
@@ -1099,21 +1100,94 @@ const budgetFor = (ym, catId) => { const b = S.budgets[ym] || {}; if (b[catId] !
    must never be counted as your income, expense, budget spend or savings. */
 const passList = () => S.transactions.filter(t => t.pass);
 const passWhoOf = (t) => (t.who || '').trim() || 'Unnamed';
+/* One entry can belong to more than one person (father's rent + mother's medicines paid in a
+   single UPI transfer). `people` holds the split; a plain entry just uses `who`. */
+function passShares(t) {
+  const ppl = (t.people || []).filter(p => p && p.who);
+  if (ppl.length) {
+    const list = ppl.map(p => ({ who: String(p.who).trim() || 'Unnamed', amt: round2(+p.amt || 0), settled: p.settled ? 1 : 0 }));
+    const total = list.reduce((a, x) => a + x.amt, 0);
+    const allSettled = t.pass === 2;
+    if (total !== round2(t.amount)) {
+      /* never silently lose money: scale whatever was stored so the shares always add up */
+      if (total <= 0) return [{ who: list[0].who, amt: round2(t.amount), settled: allSettled ? 1 : list[0].settled }];
+      return list.map(x => ({ who: x.who, amt: round2(x.amt * t.amount / total), settled: allSettled ? 1 : x.settled }));
+    }
+    return allSettled ? list.map(x => ({ ...x, settled: 1 })) : list;
+  }
+  return [{ who: passWhoOf(t), amt: round2(t.amount), settled: t.pass === 2 ? 1 : 0 }];
+}
+/* A shared payment settles person by person: the entry only closes once every share is closed. */
+function passShareOpen(t, who) {
+  const sh = passShares(t).find(x => x.who === who);
+  return sh ? !sh.settled : false;
+}
+function passSettleShare(t, who) {
+  const shares = passShares(t);
+  if (shares.length > 1 || (t.people || []).length) {
+    t.people = shares.map(x => ({ who: x.who, amt: x.amt, settled: (who ? x.who === who : true) ? 1 : x.settled }));
+    if (t.people.every(x => x.settled)) t.pass = 2;
+  } else {
+    t.pass = 2;
+  }
+  t.updated = Date.now();
+  return true;
+}
+/* the people list = everyone you saved + everyone already in your entries */
+function passPeople() {
+  const set = new Set((S.settings.passPeople || []).map(x => String(x).trim()).filter(Boolean));
+  for (const t of S.transactions) if (t.pass) for (const sh of passShares(t)) set.add(sh.who);
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+function addPassPerson(name) {
+  const n = String(name || '').trim(); if (!n) return false;
+  const list = (S.settings.passPeople || []).slice();
+  if (!list.some(x => x.toLowerCase() === n.toLowerCase())) { list.push(n); S.settings.passPeople = list; save(true); }
+  return true;
+}
+/* Per-person totals. `held` is signed on purpose: an expense before any income means you are
+   out of pocket for them, not that they owe you nothing. Neither side is your income/expense. */
 function passStats(list) {
   const by = {};
+  const touch = w => by[w] || (by[w] = { who: w, got: 0, paid: 0, open: 0, settled: 0, count: 0, first: null, last: null });
   for (const t of (list || S.transactions)) {
     if (!t.pass) continue;
-    const w = passWhoOf(t);
-    const r = by[w] || (by[w] = { who: w, got: 0, paid: 0, settled: 0, open: 0, count: 0 });
-    if (t.type === 'income') r.got += t.amount; else if (t.type === 'expense') r.paid += t.amount;
-    r.count++;
-    if (t.pass === 2) r.settled++; else r.open++;
+    for (const sh of passShares(t)) {
+      const r = touch(sh.who);
+      if (t.type === 'income') r.got += sh.amt; else if (t.type === 'expense') r.paid += sh.amt;
+      r.count++;
+      if (sh.settled) r.settled++;
+      else {
+        r.open++;
+        /* only unsettled shares describe money you are holding right now */
+        r.openNet = (r.openNet || 0) + (t.type === 'income' ? sh.amt : t.type === 'expense' ? -sh.amt : 0);
+      }
+      if (!r.first || t.date < r.first) r.first = t.date;
+      if (!r.last || t.date > r.last) r.last = t.date;
+    }
   }
-  return Object.values(by).map(r => ({ ...r, held: r.got - r.paid })).sort((a, b) => b.held - a.held);
+  return Object.values(by).map(r => ({ ...r, held: r.got - r.paid, openHeld: r.openNet || 0 }))
+    .sort((a, b) => b.openHeld - a.openHeld || b.held - a.held);
 }
-/* only unsettled pass entries count as money you are holding right now */
-const passHeld = () => sum(S.transactions.filter(t => t.pass === 1 && t.type === 'income'), t => t.amount)
-  - sum(S.transactions.filter(t => t.pass === 1 && t.type === 'expense'), t => t.amount);
+/* chronological ledger with a running balance — this is what makes "expense first, income later"
+   (and the reverse) obvious instead of confusing. */
+function passLedger(who) {
+  const rows = passList()
+    .map(t => ({ t, amt: sum(passShares(t).filter(sh => sh.who === who), sh => sh.amt), shares: passShares(t).filter(sh => sh.who === who), open: passShareOpen(t, who) }))
+    .filter(r => r.amt > 0)
+    .sort((a, b) => (a.t.date + a.t.time).localeCompare(b.t.date + b.t.time));
+  let run = 0;
+  return rows.map(r => {
+    /* an income brings their money in (+), an expense pays it out (−) */
+    const delta = r.t.type === 'income' ? r.amt : r.t.type === 'expense' ? -r.amt : 0;
+    run += delta;
+    return { t: r.t, amt: r.amt, delta, run, open: r.open };
+  });
+}
+const passHeld = (who) => {
+  const rows = who ? passStats().filter(r => r.who === who) : passStats();
+  return sum(rows, r => r.openHeld || 0);
+};
 
 const reimbPending = () => sum(S.transactions.filter(t => t.reimb === 1), t => t.amount);
 const reimbSettled = () => sum(S.transactions.filter(t => t.reimb === 2), t => t.amount);
@@ -1435,7 +1509,7 @@ function txRow(t, opt = {}) {
     <div class="av" style="background:${hexA(c.color, .14)}">${c.e}</div>
     <div class="grow">
       <div class="t1">${esc(t.note || c.name)}</div>
-      <div class="t2">${esc(c.name)} · ${a.e} ${esc(a.name)}${t.pass ? ` · <span class="tag p">🤝 ${esc(passWhoOf(t))}${t.pass === 2 ? ' · settled' : ''}</span>` : ''}${t.reimb === 1 ? ' · <span class="tag w">reimb. due</span>' : ''}${(t.tags || []).includes('delhi') ? ' · <span class="tag p">delhi</span>' : ''}</div>
+      <div class="t2">${esc(c.name)} · ${a.e} ${esc(a.name)}${t.pass ? ` · <span class="tag p">🤝 ${esc(passShares(t).map(x => x.who).join(' + '))}${t.pass === 2 ? ' · settled' : ''}</span>` : ''}${t.reimb === 1 ? ' · <span class="tag w">reimb. due</span>' : ''}${(t.tags || []).includes('delhi') ? ' · <span class="tag p">delhi</span>' : ''}</div>
     </div>
     <div class="right">
       <div class="amt ${amtCls}">${sign}${money(t.amount)}</div>
@@ -1504,6 +1578,7 @@ function insights(ym) {
   if (pend > 0) out.push({ e: '🧾', t: `<b>${money(pend)}</b> of office spends is still marked reimbursable — settle it from the Reimbursements page.` });
   const pHeld = passHeld();
   if (pHeld > 0) out.push({ e: '🤝', t: `<b>${money(pHeld)}</b> is pass-through money you are holding for someone else. It is left out of your income, expenses and budgets.` });
+  else if (pHeld < 0) out.push({ e: '🤝', t: `You are <b>${money(-pHeld)}</b> out of pocket for pass-through spends — it is not counted as your expense, and their money clears it when it arrives.` });
   const over = Object.entries(S.budgets[ym] || {}).filter(([id, lim]) => { const sp = sum(monthTx(ym).filter(t => t.type === 'expense' && t.cat === id), t => t.amount); return lim && sp > lim; });
   if (over.length) out.push({ e: '🚧', t: `<b>${over.length}</b> budget${over.length > 1 ? 's' : ''} exceeded: ${over.slice(0, 3).map(([id]) => esc(catById(id).name)).join(', ')}.` });
   const delhi = sum(S.transactions.filter(t => (t.tags || []).includes('delhi') && t.type === 'expense'), t => t.amount);
@@ -1608,10 +1683,15 @@ window.renderHome = function () {
       <div class="ty">${a.type}</div></div>`; }).join('')}</div></div>`;
 
   const passN = passHeld();
+  const passRows = passStats();
   parts.pass = passN || passList().length ? `<div class="section"><div class="section-head"><h2>Pass-through money</h2><button class="link" data-nav="pass">Manage</button></div>
-    <div class="card pad"><div class="between"><div><div class="tiny muted" style="font-weight:700">HOLDING FOR OTHERS</div>
-      <div style="font-size:20px;font-weight:800">${money(passN)}</div></div>
-      <div class="right tiny muted" style="max-width:46%">Not your income or expense${passStats().length ? ` · ${passStats().map(r => esc(r.who)).join(', ')}` : ''}</div></div></div></div>` : '';
+    <div class="card pad"><div class="between"><div><div class="tiny muted" style="font-weight:700">${passN < 0 ? 'OUT OF POCKET FOR OTHERS' : 'HOLDING FOR OTHERS'}</div>
+      <div style="font-size:20px;font-weight:800">${money(Math.abs(passN))}</div></div>
+      <div class="right tiny muted" style="max-width:46%">Not your income or expense</div></div>
+      ${passRows.length ? `<div class="sep"></div>${passRows.slice(0, 4).map(r => `<div class="between" style="margin-top:6px">
+        <span class="sm">${esc(r.who)}</span>
+        <span class="sm ${(r.openHeld || 0) < 0 ? 'neg' : ''}">${r.openHeld ? money(Math.abs(r.openHeld)) + ((r.openHeld || 0) < 0 ? ' owed by you' : ' held') : 'settled'}</span></div>`).join('')}` : ''}
+    </div></div>` : '';
   const budSrc = budgetSource(ym);
   parts.budget = budTotal ? `<div class="section"><div class="section-head"><h2>Budget health · ${esc(periodLabel(ym))}</h2>
       <button class="link" style="white-space:nowrap" data-act="budgetwiz">Edit budget</button>
@@ -1805,9 +1885,13 @@ function evalExpr(str) {
 }
 function txSheet(id, preset) {
   const editing = id ? S.transactions.find(t => t.id === id) : null;
-  const draft = editing ? { ...editing } : {
+  const draft = editing ? Object.assign({}, editing, {
+    split: (editing.people || []).length > 1 ? 1 : 0,
+    shares: (editing.people || []).length ? editing.people.map(x => ({ who: x.who, amt: x.amt })) : []
+  }) : {
     id: null, type: (preset && preset.type) || 'expense', amount: 0, cat: '', acc: (preset && preset.acc) || (S.accounts[0] || {}).id,
-    to: (S.accounts[1] || S.accounts[0] || {}).id, date: todayISO(), note: '', tags: [], reimb: 0
+    to: (S.accounts[1] || S.accounts[0] || {}).id, date: todayISO(), note: '', tags: [], reimb: 0,
+    pass: (preset && preset.pass) || 0, who: (preset && preset.who) || '', split: (preset && preset.split) || 0, shares: (preset && preset.shares) || []
   };
   let expr = draft.amount ? String(draft.amount) : '';
   const cats = () => S.categories.filter(c => c.type === (draft.type === 'income' ? 'income' : 'expense'));
@@ -1865,8 +1949,21 @@ function txSheet(id, preset) {
       <div class="grow"><strong>🤝 Pass-through</strong><span>Someone else's money — you are only moving it for them</span></div>
       <label class="switch"><input type="checkbox" id="fPass" ${draft.pass ? 'checked' : ''}><span class="slider"></span></label></div>
     <div id="fPassBox" style="display:${draft.pass ? 'block' : 'none'}">
-      <div class="field"><label>Whose money is it?</label><input id="fWho" value="${esc(draft.who || '')}" placeholder="e.g. Father">
-        <div class="chips">${['Father', 'Mother', 'Brother', 'Sister', 'Friend'].map(w => `<span class="chip" data-who="${w}">${w}</span>`).join('')}</div></div>
+      <div class="field"><label>Whose money is it?</label>
+        <div class="chips" style="flex-wrap:wrap;overflow:visible">
+          ${passPeople().map(w => `<span class="chip ${(draft.who || '').toLowerCase() === w.toLowerCase() ? 'on' : ''}" data-who="${esc(w)}">${esc(w)}</span>`).join('')}
+          <span class="chip" data-who-new="1">+ New person</span></div>
+        <input id="fWho" value="${esc(draft.who || '')}" placeholder="e.g. Father"></div>
+      <div class="opt-row" style="border:1px solid var(--border);border-radius:13px">
+        <div class="grow"><strong>Split between people</strong><span>One payment covering two people — father's rent + mother's medicines</span></div>
+        <label class="switch"><input type="checkbox" id="fSplit" ${draft.split ? 'checked' : ''}><span class="slider"></span></label></div>
+      <div id="fSplitBox" style="display:${draft.split ? 'block' : 'none'}">
+        <div class="chips" style="flex-wrap:wrap;overflow:visible;margin-bottom:8px">
+          ${passPeople().map(w => `<span class="chip" data-share-add="${esc(w)}">+ ${esc(w)}</span>`).join('')}
+          <span class="chip" data-share-add="__new">+ New person</span></div>
+        <div id="fShareRows"></div>
+        <div class="tiny muted" id="fShareHint"></div>
+      </div>
       <div class="banner"><span class="e">ℹ️</span><div>Balances still move, but this entry is <b>left out of your income, expenses, budgets and savings rate</b>. See it under More → Pass-through.</div></div>
     </div>
     ${draft.type !== 'transfer' && fieldsFor(draft.type).length ? `<div class="sep"></div>${fieldInputs(draft.type, draft.fields)}` : ''}
@@ -1881,6 +1978,7 @@ function txSheet(id, preset) {
     onMount(b, f) {
       const sync = (redo) => {
         if ($('#fWho')) draft.who = $('#fWho').value;                     /* keep typed person name */
+        if ($('#fSplit')) draft.split = $('#fSplit').checked ? 1 : 0;
         $('#sheetBody').innerHTML = body(); if (redo) bind(); refoot();
       };
       const refoot = () => { $('#sheetFoot').innerHTML = foot(); bindFoot(); };
@@ -1891,13 +1989,31 @@ function txSheet(id, preset) {
       const saveTx = () => {
         const amt = round2(evalExpr(expr) || draft.amount);
         if (!(amt > 0)) return toast('Enter an amount first');
+        const reimbEl = $('#fReimb'), passEl = $('#fPass');
         if (draft.type === 'transfer' && draft.acc === draft.to) return toast('Pick two different accounts');
         if (draft.type !== 'transfer' && !draft.cat) draft.cat = (cats()[0] || {}).id;
+        /* pass-through split: every share must be a real amount and the shares must add up */
+        let passPeopleList = null;
+        if (passEl && passEl.checked && draft.split) {
+          const rows = (draft.shares || []).filter(r => r.who);
+          if (rows.length < 1) return toast('Add the person this money belongs to');
+          const amtOf = (r, i, isLast) => isLast ? round2(amt - rows.slice(0, -1).reduce((a, x) => a + (+x.amt || 0), 0)) : round2(+r.amt || 0);
+          const shares = rows.map((r, i) => ({ who: r.who.trim(), amt: amtOf(r, i, i === rows.length - 1) }));
+          if (shares.some(x => x.amt < 0)) return toast('Shares add up to more than ' + inr(amt));
+          /* merge a repeated name instead of silently dropping money */
+          const merged = [];
+          for (const sh of shares) {
+            const hit = merged.find(m => m.who.toLowerCase() === sh.who.toLowerCase());
+            if (hit) hit.amt = round2(hit.amt + sh.amt); else merged.push({ ...sh });
+          }
+          const sumShares = round2(merged.reduce((a, x) => a + x.amt, 0));
+          if (sumShares !== round2(amt)) return toast('Shares must add up to ' + inr(amt) + ' — off by ' + inr(Math.abs(amt - sumShares)));
+          passPeopleList = merged.filter(x => x.amt > 0).map(x => ({ who: x.who, amt: x.amt, settled: 0 }));
+          for (const sh of passPeopleList) addPassPerson(sh.who);
+        }
         const note = ($('#fNote') || {}).value || '';
         const cf = {}; $$('[data-cf]', $('#sheetBody')).forEach(el => { if (el.value !== '' && el.value != null) cf[el.dataset.cf] = el.value; });
         const date = ($('#fDate') || {}).value || todayISO();
-        const reimbEl = $('#fReimb');
-        const passEl = $('#fPass');
         const fromAcc = $('#fAcc'), toAcc = $('#fTo');
         const rec = {
           id: draft.id || uid('t'), type: draft.type, amount: amt,
@@ -1908,7 +2024,8 @@ function txSheet(id, preset) {
           fields: Object.assign({}, draft.fields || {}, cf),
           reimb: draft.type === 'expense' && !(passEl && passEl.checked) && reimbEl && reimbEl.checked ? 1 : 0,
           pass: passEl && passEl.checked ? 1 : 0,
-          who: passEl && passEl.checked ? (($('#fWho') || {}).value || 'Unnamed').trim() : '',
+          who: passEl && passEl.checked ? (passPeopleList && passPeopleList.length ? passPeopleList[0].who : (($('#fWho') || {}).value || 'Unnamed').trim()) : '',
+          people: passPeopleList && passPeopleList.length > 1 ? passPeopleList : undefined,
           created: draft.created || Date.now(), updated: Date.now()
         };
         if (editing) { const i = S.transactions.findIndex(t => t.id === editing.id); S.transactions[i] = rec; }
@@ -1920,11 +2037,71 @@ function txSheet(id, preset) {
           + (fired.length ? '  ⚡ ' + fired.join(', ') : ''));
         rerender();
       };
+      /* ---- pass-through share editor: last row always holds the remainder ---- */
+      const shareRows = () => {
+        const box = $('#fShareRows'); if (!box) return;
+        const rows = draft.shares || [];
+        const total = round2(evalExpr(expr) || draft.amount);
+        const fixed = rows.slice(0, -1).reduce((a, r) => a + (+r.amt || 0), 0);
+        const rest = round2(total - fixed);
+        box.innerHTML = rows.map((r, i) => {
+          const isLast = i === rows.length - 1;
+          const amt = isLast ? rest : (+r.amt || 0);
+          return `<div class="row" style="gap:8px;align-items:center;margin-bottom:8px">
+            <div class="grow"><div style="font-weight:650">${esc(r.who)}</div></div>
+            <input type="number" inputmode="numeric" style="width:104px" data-share-amt="${i}" ${isLast ? 'disabled' : ''}
+              value="${isLast ? (rest > 0 ? rest : '') : (r.amt || '')}" placeholder="${isLast ? 'rest' : '0'}">
+            <button class="btn sm soft" data-share-del="${i}" ${rows.length < 2 ? 'disabled' : ''}>✕</button></div>`;
+        }).join('') || '<div class="tiny muted" style="margin-bottom:8px">Add at least two people to split this entry, or just pick one name above.</div>';
+        const hint = $('#fShareHint');
+        if (hint) hint.innerHTML = !rows.length ? ''
+          : rows.length === 1 ? 'One person — this just records the whole amount for <b>' + esc(rows[0].who) + '</b>.'
+          : rest < 0 ? `<b class="neg">Over-allocated by ${inr(Math.abs(rest))}</b> — the shares cannot be more than the entry.`
+          : `Rest for ${esc(rows[rows.length - 1].who)}: <b>${inr(Math.max(0, rest))}</b>`;
+        $$('[data-share-amt]', box).forEach(inp => inp.oninput = () => {
+          const i = +inp.dataset.shareAmt; draft.shares[i].amt = Math.max(0, +inp.value || 0); shareRows();
+        });
+        $$('[data-share-del]', box).forEach(btn => btn.onclick = () => { draft.shares.splice(+btn.dataset.shareDel, 1); shareRows(); });
+      };
+      const addShare = (who) => {
+        if (who === '__new') {
+          const n = prompt('Person name'); if (!n) return;
+          addPassPerson(n); who = n.trim();
+        }
+        draft.shares = draft.shares || [];
+        if (draft.shares.length === 0) {
+          const first = ($('#fWho') || {}).value || draft.who || '';
+          if (first.trim() && first.trim().toLowerCase() !== who.toLowerCase()) draft.shares.push({ who: first.trim(), amt: Math.max(0, round2(evalExpr(expr) || draft.amount)) });
+        }
+        if (!draft.shares.some(r => r.who.toLowerCase() === who.toLowerCase())) draft.shares.push({ who, amt: 0 });
+        if (!draft.who) draft.who = draft.shares[0].who;
+        shareRows();
+      };
       function bind() {
         const passT = $('#fPass');
         /* must re-bind: the toggle redraws the whole body, keypad and chips included */
         if (passT) passT.onchange = () => { draft.pass = passT.checked ? 1 : 0; sync(true); };
-        $$('[data-who]', b).forEach(c => c.onclick = () => { const i = $('#fWho'); if (i) i.value = c.dataset.who; draft.who = c.dataset.who; });
+        $$('[data-who]', b).forEach(c => c.onclick = () => {
+          const i = $('#fWho'); if (i) i.value = c.dataset.who;
+          draft.who = c.dataset.who;
+          $$('[data-who]', b).forEach(x => x.classList.toggle('on', x === c));
+          if (draft.shares && draft.shares.length) { draft.shares[0].who = c.dataset.who; shareRows(); }
+        });
+        $$('[data-who-new]', b).forEach(c => c.onclick = () => {
+          const n = prompt('Person name'); if (!n) return;
+          addPassPerson(n);
+          const i = $('#fWho'); if (i) i.value = n.trim();
+          draft.who = n.trim(); sync(true);
+        });
+        $$('[data-share-add]', b).forEach(c => c.onclick = () => addShare(c.dataset.shareAdd));
+        const splitT = $('#fSplit');
+        if (splitT) splitT.onchange = () => {
+          draft.split = splitT.checked ? 1 : 0;
+          if (splitT.checked && !(draft.shares || []).length) { draft.shares = []; addShare(($('#fWho') || {}).value || draft.who || 'Unnamed'); }
+          $('#fSplitBox').style.display = splitT.checked ? 'block' : 'none';
+          shareRows();
+        };
+        shareRows();
         $$('#keypad .key', b).forEach(k => k.onclick = () => {
           const v = k.dataset.k;
           if (v === '=') { const r = evalExpr(expr); expr = r ? String(round2(r)) : ''; }
@@ -1961,16 +2138,23 @@ function txSheet(id, preset) {
     }
   });
 }
-function promptSheet(title, label, value, onOk, textarea) {
+function promptSheet(title, label, value, onOk, opts) {
+  /* opts: true = textarea (legacy callers) · { textarea, hint, toggle:{label,hint,on} } */
+  const o = opts === true ? { textarea: true } : (opts || {});
   openSheet({
     title, body: `<div class="field"><label>${esc(label)}</label>
-      ${textarea ? `<textarea id="pmV">${esc(value || '')}</textarea>` : `<input id="pmV" value="${esc(value || '')}">`}</div>`,
+      ${o.textarea ? `<textarea id="pmV">${esc(value || '')}</textarea>` : `<input id="pmV" value="${esc(value || '')}">`}
+      ${o.hint ? `<div class="tiny muted" style="margin-top:6px">${o.hint}</div>` : ''}</div>
+      ${o.toggle ? `<div class="opt-row" style="border:1px solid var(--border);border-radius:13px">
+        <div class="grow"><strong>${esc(o.toggle.label)}</strong><span>${esc(o.toggle.hint || '')}</span></div>
+        <label class="switch"><input type="checkbox" id="pmT" ${o.toggle.on ? 'checked' : ''}><span class="slider"></span></label></div>` : ''}`,
     foot: `<button class="btn grow" data-x="c">Cancel</button><button class="btn primary grow" data-x="o">Save</button>`,
     onMount(b, f) {
       const inp = $('#pmV', b); setTimeout(() => inp.focus(), 120);
+      const t = $('#pmT', b);
       $('[data-x=c]', f).onclick = () => backSheet();
-      $('[data-x=o]', f).onclick = () => { const v = inp.value; backSheet(); onOk(v); };
-      inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !textarea) { const v = inp.value; backSheet(); onOk(v); } });
+      $('[data-x=o]', f).onclick = () => { const v = inp.value, on = t ? t.checked : undefined; backSheet(); onOk(v, on); };
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !o.textarea) { const v = inp.value, on = t ? t.checked : undefined; backSheet(); onOk(v, on); } });
     }
   });
 }
@@ -1995,7 +2179,8 @@ function txDetail(id) {
       <div class="kv"><span>Tags</span><b>${(t.tags || []).length ? t.tags.map(x => '#' + esc(x)).join(' ') : '—'}</b></div>
       ${Object.entries(t.fields || {}).filter(([k, v]) => v !== '' && v != null).map(([k, v]) => {
         const f = fieldByKey(k); return `<div class="kv"><span>${esc(f ? f.label : k)}</span><b>${esc(v)}</b></div>`; }).join('')}
-      ${t.pass ? `<div class="kv"><span>Pass-through</span><b>${esc(passWhoOf(t))} · ${t.pass === 1 ? '<span class="tag w">open</span>' : '<span class="tag g">settled</span>'}</b></div>
+      ${t.pass ? `<div class="kv"><span>Pass-through</span><b>${t.pass === 1 ? '<span class="tag w">open</span>' : '<span class="tag g">settled</span>'}</b></div>
+        ${passShares(t).map(sh => `<div class="kv"><span>${esc(sh.who)}${passShares(t).length > 1 ? ' (share)' : ''}</span><b>${money(sh.amt)}</b></div>`).join('')}
         <div class="tiny muted" style="margin-top:6px">Left out of your income, expenses, budgets and savings rate.</div>` : ''}
       ${t.reimb ? `<div class="kv"><span>Reimbursement</span><b>${t.reimb === 1 ? '<span class="tag w">due</span>' : '<span class="tag g">settled</span>'}</b></div>` : ''}
       <div class="kv"><span>Last edited</span><b>${timeAgo(t.updated)}</b></div>
@@ -2962,32 +3147,86 @@ function setupWizard(opts) {
   render();
 }
 
+/* One person's block: received, paid, what is left, and the running balance row by row. */
+function passLedgerSheet(who) {
+  const rows = passLedger(who);
+  const stat = (passStats().find(r => r.who === who)) || { who, got: 0, paid: 0, held: 0, openHeld: 0, count: 0 };
+  const held = stat.openHeld || 0;
+  openSheet({
+    title: 'Pass-through · ' + who,
+    body: `<div class="card pad">
+      <div class="between"><div><div class="tiny muted" style="font-weight:700">${held < 0 ? 'YOU ARE OUT OF POCKET' : 'YOU ARE HOLDING'}</div>
+        <div style="font-size:24px;font-weight:800">${money(Math.abs(held))}</div>
+        <div class="tiny muted" style="margin-top:2px">${held < 0 ? 'you paid this much of their money before it arrived' : held > 0 ? 'of their money is still with you' : 'nothing outstanding'}</div></div>
+        <div class="right tiny muted">received<br><b>${money(stat.got)}</b><br>spent for them<br><b>${money(stat.paid)}</b></div></div>
+      <div class="sep"></div>
+      <div class="tiny muted">None of it counts as your income or expense.</div>
+    </div>
+    <div class="section"><div class="section-head"><h2>Running balance</h2>
+      ${stat.open ? `<button class="link" data-act="passsettlewho" data-id="${esc(who)}">Settle open</button>` : ''}</div>
+      <div class="card">${rows.length ? rows.map(r => `<div class="between" style="padding:10px 14px;border-bottom:1px solid var(--border)">
+        <div><div style="font-weight:600">${esc(r.t.note || catById(r.t.cat).name || (r.t.type === 'transfer' ? 'Transfer' : r.t.type))}</div>
+          <div class="tiny muted">${esc(dayLabel(r.t.date))} · ${r.t.type === 'income' ? 'received' : r.t.type === 'expense' ? 'paid for them' : 'moved between accounts'}${r.open ? '' : ' · settled'}</div></div>
+        <div class="right"><b class="${r.delta < 0 ? 'neg' : 'pos'}">${r.delta > 0 ? '+' : r.delta < 0 ? '−' : ''}${money(Math.abs(r.delta))}</b>
+          <div class="tiny muted">balance ${(r.run < 0 ? '−' : '') + money(Math.abs(r.run))}</div></div></div>`).join('')
+        : '<div class="pad muted sm">Nothing recorded for this person yet.</div>'}</div></div>
+    <div class="section"><div class="card pad"><div class="row" style="gap:8px">
+      <button class="btn soft sm grow" data-act="passrename" data-id="${esc(who)}">✏️ Rename</button>
+      <button class="btn soft sm grow" data-act="passaddtx" data-id="${esc(who)}">＋ Entry for ${esc(who)}</button></div></div></div>`,
+    foot: `<button class="btn primary grow" data-x="o">Done</button>`,
+    onMount(b, f) { $('[data-x=o]', f).onclick = () => backSheet(); }
+  });
+}
+
 /* ---- Pass-through money: someone else's money you are moving ---------------- */
 window.renderPass = function () {
   const rows = passStats();
+  const registered = passPeople();
   const held = passHeld();
   const got = sum(S.transactions.filter(t => t.pass && t.type === 'income'), t => t.amount);
   const paid = sum(S.transactions.filter(t => t.pass && t.type === 'expense'), t => t.amount);
+  const openN = S.transactions.filter(t => t.pass === 1).length;
   const recent = passList().slice().sort(sortTxDesc).slice(0, 40);
+  const peopleRows = uniq([...rows.map(r => r.who), ...registered]);
   $('#s-pass').innerHTML = `
   ${backBtnBar('Pass-through money', 'Money you move for someone else — never counted as yours')}
   <div class="card pad">
-    <div class="tiny muted" style="font-weight:700">YOU ARE HOLDING</div>
-    <div style="font-size:26px;font-weight:800">${money(held)}</div>
+    <div class="tiny muted" style="font-weight:700">${held < 0 ? 'YOU ARE OUT OF POCKET FOR OTHERS' : 'YOU ARE HOLDING FOR OTHERS'}</div>
+    <div style="font-size:26px;font-weight:800">${money(Math.abs(held))}</div>
+    <div class="tiny muted" style="margin-top:2px">${held < 0 ? 'you paid out of your own pocket before their money arrived — still not your expense' : held > 0 ? 'their money sitting in your accounts' : 'nothing outstanding right now'}</div>
     <div class="between" style="margin-top:10px">
       <span class="sm">Received <b class="pos">${money(got)}</b></span>
       <span class="sm">Spent for them <b>${money(paid)}</b></span></div>
     <div class="sep"></div>
     <div class="tiny muted">These entries still move your real account balances, but they are skipped in income, expenses, budgets, savings rate and analytics.</div>
+    <div class="row" style="gap:8px;margin-top:12px">
+      <button class="btn soft sm grow" data-act="passaddperson">＋ Add a person</button>
+      ${openN ? `<button class="btn soft sm grow" data-act="passsettleall">✅ Settle all (${openN})</button>` : ''}</div>
   </div>
-  ${rows.length ? `<div class="section"><div class="section-head"><h2>By person</h2></div>
-    <div class="card pad">${rows.map(r => `<div class="between" style="padding:9px 0;border-bottom:1px solid var(--border)">
-      <div><b>${esc(r.who)}</b><div class="tiny muted">${r.count} ${r.count === 1 ? 'entry' : 'entries'}${r.open ? ` · ${r.open} open` : ' · all settled'}</div></div>
-      <div class="right"><b>${money(r.held)}</b><div class="tiny muted">in ₹ · got ${money(r.got)} / paid ${money(r.paid)}</div></div></div>`).join('')}
-      ${rows.some(r => r.open) ? `<button class="btn soft block" style="margin-top:10px" data-act="passsettleall">✅ Settle everything open</button>` : ''}</div></div>` : ''}
-  <div class="section"><div class="section-head"><h2>Entries</h2><button class="link" data-nav="records">All records</button></div>
-    <div class="card">${recent.length ? recent.map(t => txRow(t)).join('') : `<div class="pad muted sm">No pass-through entries yet. Add an entry and switch on <b>🤝 Pass-through</b>, or pick either type in the Add sheet.</div>`}</div></div>
-  <div class="section"><div class="card pad"><div class="tiny muted">Open the Add sheet and flip <b>🤝 Pass-through</b> when a spend or transfer is not yours. Mark it settled once you hand back or close the balance.</div></div></div>`;
+  <div class="section"><div class="section-head"><h2>People (${peopleRows.length})</h2></div>
+    ${peopleRows.length ? peopleRows.map(who => {
+      const r = rows.find(x => x.who === who) || { who, got: 0, paid: 0, held: 0, openHeld: 0, count: 0, open: 0, settled: 0, first: null, last: null };
+      const h = r.openHeld || 0, isNeg = h < 0;
+      return `<div class="card pad" style="margin-bottom:10px" data-act="passledger" data-id="${esc(who)}">
+        <div class="between">
+          <div class="row" style="gap:10px;align-items:center">
+            <div class="av" style="background:${isNeg ? 'rgba(225,29,72,.14)' : 'rgba(99,85,245,.14)'}">${esc(who.slice(0, 1).toUpperCase())}</div>
+            <div><b>${esc(who)}</b><div class="tiny muted">${r.count ? r.count + (r.count === 1 ? ' entry' : ' entries') + (r.open ? ' · ' + r.open + ' open' : ' · all settled') : 'no entries yet'}</div></div>
+          </div>
+          <div class="right"><b class="${isNeg ? 'neg' : ''}">${h ? money(Math.abs(h)) : money(0)}</b>
+            <div class="tiny muted">${isNeg ? 'you are out of pocket' : h ? 'held for them' : 'settled'}</div></div>
+        </div>
+        ${r.count ? `<div class="sep"></div><div class="between"><span class="tiny muted">received ${money(r.got)}</span>
+          <span class="tiny muted">spent for them ${money(r.paid)}</span>
+          <span class="row" style="gap:6px">
+            ${r.open ? `<span class="tiny" style="font-weight:650;color:var(--accent)" data-act="passsettlewho" data-id="${esc(who)}">Settle ${r.open}</span>` : ''}
+            <span class="tiny" style="color:var(--accent)">Ledger ›</span></span></div>` : ''}
+      </div>`;
+    }).join('') : `<div class="card pad muted sm">Add the people whose money you move — father, mother, a friend — and RupeeFlow keeps a separate block for each one.</div>`}
+  </div>
+  <div class="section"><div class="section-head"><h2>All entries</h2><button class="link" data-nav="records">Records</button></div>
+    <div class="card">${recent.length ? recent.map(t => txRow(t)).join('') : `<div class="pad muted sm">No pass-through entries yet. Open the Add sheet, flip <b>🤝 Pass-through</b> and pick a person (or split one payment between two).</div>`}</div></div>
+  <div class="section"><div class="card pad"><div class="tiny muted">An entry can arrive <b>before</b> the money does — record the spend for them and the block shows you are out of pocket until their transfer lands. Mark entries settled when the balance is squared; nothing ever lands in your income or expenses.</div></div></div>`;
 };
 
 window.renderReimb = function () {
@@ -3024,7 +3263,7 @@ window.renderReimb = function () {
 function csvFor(list) {
   const cf = S.customFields || [];
   const head = ['Date', 'Time', 'Type', 'Category', 'Amount', 'Account', 'To Account', 'Note', 'Tags', 'Reimbursement', 'Pass-through', ...cf.map(f => f.label)];
-  const rows = list.map(t => [t.date, t.time || '', t.type, catById(t.cat).name, t.amount, accById(t.acc).name, t.to ? accById(t.to).name : '', t.note || '', (t.tags || []).join(' '), t.reimb === 1 ? 'due' : t.reimb === 2 ? 'settled' : '', ...cf.map(f => (t.fields || {})[f.key] || '')]);
+  const rows = list.map(t => [t.date, t.time || '', t.type, catById(t.cat).name, t.amount, accById(t.acc).name, t.to ? accById(t.to).name : '', t.note || '', (t.tags || []).join(' '), t.reimb === 1 ? 'due' : t.reimb === 2 ? 'settled' : '', t.pass ? passShares(t).map(sh => sh.who).join(' + ') : '', ...cf.map(f => (t.fields || {})[f.key] || '')]);
   return [head, ...rows].map(r => r.map(v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(',')).join('\n');
 }
 function download(name, text, mime) {
@@ -3355,7 +3594,7 @@ const G_ = {
   tables(rev_) {
     const T = [];
     T.push({ tab: 'Transactions', rows: [['Date', 'Time', 'Type', 'Category', 'Amount', 'Account', 'To', 'Note', 'Tags', 'Reimbursement', 'Pass-through', 'ID', 'Updated'],
-      ...S.transactions.slice().sort(sortTxDesc).map(t => [t.date, t.time || '', t.type, catById(t.cat).name, t.amount, accById(t.acc).name, t.to ? accById(t.to).name : '', t.note || '', (t.tags || []).join(' '), t.reimb === 1 ? 'due' : t.reimb === 2 ? 'settled' : '', t.pass ? passWhoOf(t) + (t.pass === 2 ? ' (settled)' : '') : '', t.id, new Date(t.updated || Date.now()).toISOString()])] });
+      ...S.transactions.slice().sort(sortTxDesc).map(t => [t.date, t.time || '', t.type, catById(t.cat).name, t.amount, accById(t.acc).name, t.to ? accById(t.to).name : '', t.note || '', (t.tags || []).join(' '), t.reimb === 1 ? 'due' : t.reimb === 2 ? 'settled' : '', t.pass ? passShares(t).map(sh => sh.who + ' ' + round2(sh.amt)).join(' + ') + (t.pass === 2 ? ' (settled)' : '') : '', t.id, new Date(t.updated || Date.now()).toISOString()])] });
     T.push({ tab: 'Accounts', rows: [['Account', 'Type', 'Opening', 'Current', 'Note'], ...S.accounts.map(a => [a.name, a.type, a.open, round2(accBalance(a.id)), a.note || ''])] });
     T.push({ tab: 'Categories', rows: [['Category', 'Type', 'Fixed?', 'Entries', `Spent (${monLabel(curYM, 1)})`], ...S.categories.map(c => [c.name, c.type, c.kind === 'fixed' ? 'yes' : '', S.transactions.filter(t => t.cat === c.id).length, sum(monthTx(curYM).filter(t => t.cat === c.id), t => t.amount)])] });
     T.push({ tab: 'Budgets', rows: [['Category', `Limit (${monLabel(curYM, 1)})`, 'Default limit', 'Spent', 'Used %'], ...uniq([...Object.keys(S.budgets[curYM] || {}), ...Object.keys(S.budgets['default'] || {})]).map(id => { const sp = sum(monthTx(curYM).filter(t => t.type === 'expense' && t.cat === id), t => t.amount); return [catById(id).name, budgetFor(curYM, id), (S.budgets['default'] || {})[id] || '', sp, pct(sp, budgetFor(curYM, id)).toFixed(1)]; })] });
@@ -3833,6 +4072,13 @@ window.renderSettings = function () {
         <button class="btn sm soft" data-act="setpin">${S.settings.pin ? 'Change' : 'Set'}</button></div>
       <div class="opt-row"><div class="grow"><strong>Ask PIN at launch</strong><span>Recommended if others use your phone</span></div>
         <label class="switch"><input type="checkbox" id="sLock" ${S.settings.lockOnOpen ? 'checked' : ''}><span class="slider"></span></label></div>
+      ${S.settings.pin ? `<div class="opt-row"><div class="grow"><strong>Sign in once on this phone</strong>
+        <span>${pinTrusted() ? '✅ This phone is remembered — the PIN is not asked again' : 'Ask the PIN once, then never again on this device'}</span></div>
+        <label class="switch"><input type="checkbox" id="sStay" ${pinTrusted() ? 'checked' : ''}><span class="slider"></span></label></div>
+      <div class="opt-row"><div class="grow"><strong>Lock now</strong><span>${pinTrusted() ? 'Hand the phone over — it stays unlocked next launch' : 'Ask for the PIN immediately'}</span></div>
+        <button class="btn sm soft" data-act="locknow">Lock</button></div>` : ''}
+      <div class="opt-row"><div class="grow"><strong>Google sign-in</strong><span>${S.settings.email ? (G.ready ? 'Signed in as ' + esc(S.settings.email) : 'Remembers ' + esc(S.settings.email) + ' — reconnects quietly') : 'Not connected yet'}</span></div>
+        <button class="btn sm soft" data-act="stayconnected">${G.ready ? 'Connected' : 'Reconnect'}</button></div>
       <div class="opt-row"><div class="grow"><strong>Hide balances</strong><span>Blur all amounts until you toggle back</span></div>
         <label class="switch"><input type="checkbox" id="sHide" ${S.settings.hideBalances ? 'checked' : ''}><span class="slider"></span></label></div>
       ${S.settings.pin ? `<div class="opt-row"><div class="grow"><strong>Remove PIN</strong><span>Turn off the lock screen</span></div>
@@ -3885,8 +4131,44 @@ window.renderSettings = function () {
     renderSettings();
   };
   $('#sHide').onchange = e => { S.settings.hideBalances = e.target.checked; save(true); watchMask(); rerender(); };
+  const stayT = $('#sStay');
+  if (stayT) stayT.onchange = e => {
+    setStayUnlocked(e.target.checked);
+    if (e.target.checked) trustDevice(true);
+    toast(e.target.checked ? 'This phone is remembered — no PIN next time' : 'PIN will be asked at every launch', 2600);
+    renderSettings();
+  };
 };
 /* --------------------------- PIN lock ------------------------------------- */
+/* ---------------------------------------------------------------------------
+   Staying signed in
+   You unlock once; from then on this phone is trusted and the PIN is not asked
+   again — not at launch, not after the app sits in the background, not after an
+   update. The record lives in device storage (never in your Sheet, never on
+   another phone) and is keyed to the current PIN, so changing the PIN asks
+   again. A decoy profile has its own record and is unaffected.
+   ------------------------------------------------------------------------- */
+function trustRecord() {
+  try { return JSON.parse(Store.get(TRUST_KEY(currentProfileId()), '') || 'null'); } catch (e) { return null; }
+}
+const STAY_KEY = 'rupeeflow.stayunlocked.v1';
+function stayUnlockedPref() {
+  const v = Store.get(STAY_KEY, null);
+  return v === null ? true : v === '1';        /* default: remember this phone */
+}
+function setStayUnlocked(on) { Store.set(STAY_KEY, on ? '1' : '0'); if (!on) trustDevice(false); }
+function pinTrusted() {
+  if (!S.settings.pin) return false;
+  const r = trustRecord();
+  return !!(r && r.on && r.pin === S.settings.pin);
+}
+function trustDevice(on) {
+  if (on) Store.set(TRUST_KEY(currentProfileId()), JSON.stringify({ on: true, pin: S.settings.pin, at: Date.now() }));
+  else Store.del(TRUST_KEY(currentProfileId()));
+  return on;
+}
+/* ask for the PIN only when this device has not been trusted yet */
+function needsPin() { return !!S.settings.pin && S.settings.lockOnOpen && !pinTrusted(); }
 function hashPin(p) { let h = 5381; for (const c of 'rf' + p) h = ((h << 5) + h + c.charCodeAt(0)) >>> 0; return h.toString(36); }
 /* ============================================================================
    Profiles & sign-in
@@ -4104,7 +4386,11 @@ function tryUnlock() {
     if (r.ok) { pendingProfile = null; lockScreen(false); resetLockScreen(); return; }
     pinBuf = ''; drawPin(); vibrate([20, 40, 20]); return toast('Wrong PIN — try again');
   }
-  if (hashPin(pinBuf) === S.settings.pin) { lockScreen(false); toast('Welcome back, ' + (S.settings.name || '') ); }
+  if (hashPin(pinBuf) === S.settings.pin) {
+    lockScreen(false);
+    if (stayUnlockedPref()) { trustDevice(true); toast('Welcome back, ' + (S.settings.name || '') + ' — this phone is remembered', 2600); }
+    else toast('Welcome back, ' + (S.settings.name || ''));
+  }
   else { pinBuf = ''; drawPin(); vibrate([20, 40, 20]); toast('Wrong PIN — try again'); }
 }
 function resetLockScreen() {
@@ -4113,12 +4399,18 @@ function resetLockScreen() {
   $('#pinForgot').style.display = '';
 }
 function setPinSheet() {
-  promptSheet('Set a 4-digit PIN', 'New PIN', '', (v) => {
+  promptSheet('Set a 4-digit PIN', 'New PIN', '', (v, stay) => {
     const p = String(v).trim();
     if (!/^\d{4}$/.test(p)) return toast('PIN must be exactly 4 digits');
-    S.settings.pin = hashPin(p); S.settings.lockOnOpen = true; save(true);
-    toast('PIN set — the app will ask for it at launch'); renderSettings();
-  });
+    S.settings.pin = hashPin(p); S.settings.lockOnOpen = true;
+    const remember = stay === undefined ? stayUnlockedPref() : !!stay;
+    setStayUnlocked(remember);
+    if (remember) trustDevice(true);              /* sign in once — this phone is remembered */
+    save(true);
+    toast(remember ? 'PIN set — this phone is remembered, so no PIN next time' : 'PIN set — the PIN is asked at every launch', 3200);
+    renderSettings();
+  }, { hint: 'Used only on this phone. It is not stored in your Google Sheet.',
+       toggle: { label: 'Remember this phone', hint: 'Ask the PIN once now, then never again on this device', on: stayUnlockedPref() } });
 }
 /* ============================================================================
    22. EVENT WIRING
@@ -4213,16 +4505,58 @@ document.addEventListener('click', (ev) => {
     case 'clearopts': return clearOptions();
     case 'freshstart': return freshStartConfirm();
     case 'setupwizard': return setupWizard();
+    case 'locknow': lockScreen(true); return;                 /* the trust record survives: next launch is open */
+    case 'stayconnected': {
+      if (G.ready) return toast('Already connected as ' + (S.settings.email || ''));
+      if (!S.settings.clientId) return go('sync');
+      S.settings.noAutoConnect = false; save(true);
+      toast('Connecting…');
+      G_.connect(S.settings.clientId, false).then(() => G_.reconcile('open')).then(() => { renderSettings(); toast('Signed in — you will stay signed in on this phone'); })
+        .catch(e => toast(e.message || 'Could not connect'));
+      return;
+    }
+    case 'passaddperson': {
+      const n = prompt('Who is the money for? (e.g. Father, Mother)');
+      if (!n) return;
+      addPassPerson(n); rerender(); toast('Added ' + n.trim() + ' — tap the block to see its ledger');
+      return;
+    }
+    case 'passledger': return passLedgerSheet(id);
+    case 'passaddtx': return txSheet(null, { type: 'expense', pass: 1, who: id });
+    case 'passrename': {
+      const old0 = id;
+      const n = prompt('Rename ' + old0 + ' to:', old0);
+      if (!n || n.trim() === old0) return;
+      const nn = n.trim();
+      let hits = 0;
+      for (const t of S.transactions) {
+        if (!t.pass) continue;
+        if ((t.people || []).length) {
+          t.people = t.people.map(x => { if (x.who === old0) { hits++; return { ...x, who: nn }; } return x; });
+        } else if ((t.who || '') === old0) hits++;
+        if ((t.who || '') === old0) t.who = nn;
+      }
+      S.settings.passPeople = (S.settings.passPeople || []).map(x => x === old0 ? nn : x);
+      addPassPerson(nn);
+      save(true); rerender(); toast('Renamed on ' + hits + (hits === 1 ? ' entry' : ' entries'));
+      return;
+    }
+    case 'passsettlewho': {
+      let n = 0;
+      for (const t of S.transactions) if (t.pass && passShareOpen(t, id)) { passSettleShare(t, id); n++; }
+      save(); rerender();
+      return toast(n + (n === 1 ? ' entry' : ' entries') + ' settled for ' + id);
+    }
     case 'passsettle': {
       const t = S.transactions.find(x => x.id === id); if (!t) return;
-      t.pass = 2; t.updated = Date.now(); save(); closeSheet(); rerender();
+      passSettleShare(t, null); save(); closeSheet(); rerender();
       return toast('Marked settled — still excluded from your money');
     }
     case 'passsettleall': return confirmSheet('Settle all pass-through entries?',
       'Every open pass-through entry is marked settled. The money stays out of your income and expenses; the “holding” figure drops to zero.',
       'Settle all', () => {
-        let n = 0; for (const t of S.transactions) if (t.pass === 1) { t.pass = 2; t.updated = Date.now(); n++; }
-        save(); rerender(); toast(n + ' entries settled');
+        let n = 0; for (const t of S.transactions) if (t.pass === 1) { passSettleShare(t, null); n++; }
+        save(); closeSheet(); rerender(); toast(n + (n === 1 ? ' entry' : ' entries') + ' settled');
       });
     case 'budgetwiz': return budgetWizard();
     case 'budgetdefaults': return confirmSheet('Restore example budgets?',
@@ -4687,11 +5021,13 @@ function init() {
   const h = (location.hash || '').replace('#', '');
   go(SCREENS.includes(h) ? h : 'home', true);
   if (!S.settings.onboarded) setTimeout(onboarding, 350);
-  else if (S.settings.pin && S.settings.lockOnOpen) lockScreen(true);
+  else if (needsPin()) lockScreen(true);
   /* a decoy boot profile with no PIN shows its own lock screen if it has one */
   else if (profileById(currentProfileId()).decoy && !S.settings.pin && S.settings.decoyLock) lockScreen(true);
   /* launch sync: sign in silently with the remembered account, then merge with Drive.
      This is what makes the laptop show the phone's latest data without any tapping. */
+  /* Google: a remembered account plus a configured client = signed in for good. The token is
+     refreshed silently on launch, on focus and on reconnect — the user never signs in twice. */
   if (S.settings.clientId && S.settings.email && navigator.onLine && !S.settings.noAutoConnect) {
     setTimeout(() => {
       S.settings.syncGuard = true; save(true);
@@ -4711,8 +5047,14 @@ function init() {
   let hid = 0;
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) hid = Date.now();
-    else if (S.settings.pin && S.settings.lockOnOpen && Date.now() - hid > 300000) lockScreen(true);
+    else if (needsPin() && Date.now() - hid > 300000) lockScreen(true);
   });
+  /* keep trying quietly in the background: a stale token, a flaky network or a browser that
+     blocked the first silent attempt should never turn into "sign in again" for the user */
+  setInterval(() => {
+    if (G.token || !S.settings.clientId || !S.settings.email || !navigator.onLine || S.settings.noAutoConnect) return;
+    G_.connect(S.settings.clientId, true).then(() => G_.reconcile('open')).catch(() => { });
+  }, 15 * 60000);
   /* silent token refresh every 45 min while connected */
   setInterval(() => { if (G.token && S.settings.clientId && Date.now() > G.exp - 300000) G_.connect(S.settings.clientId, true).catch(() => { }); }, 45 * 60000);
   /* service worker (offline + install) */
