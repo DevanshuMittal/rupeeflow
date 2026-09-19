@@ -1,0 +1,17 @@
+{
+  "name": "rupeeflow",
+  "version": "1.4.7",
+  "private": true,
+  "description": "RupeeFlow \u2014 offline-first personal finance PWA backed by Google Drive Sheets",
+  "scripts": {
+    "serve": "python3 -m http.server 8080 --bind 0.0.0.0",
+    "test": "node tests/all.js",
+    "test:setup": "bash tools/setup-tests.sh",
+    "test:options": "node tests/options.js",
+    "test:integrity": "node tests/ci-check.js"
+  },
+  "devDependencies": {
+    "playwright": "1.47.2"
+  },
+  "license": "MIT"
+}

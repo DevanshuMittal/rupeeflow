@@ -272,3 +272,31 @@ node tests/ci-check.js                      integrity gate (CI runs this too)
 node tools/bump.js [patch|minor|major|x.y.z] release stamp
 ./tools/push.sh "what changed"              ship it
 ```
+
+## What runs automatically when you push
+
+Two workflows, both driven by the same command (`npm test` = ten suites, 427 checks):
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| **Test suite** (`test.yml`) | push to `main`, pull requests, Actions → Run workflow | installs Playwright + Chromium, serves the app, runs **every** suite |
+| **Deploy RupeeFlow** (`deploy.yml`) | push to `main`, Actions → Run workflow | `validate` (integrity gate) → `browsers` (every suite) → **deploy to Pages only if both pass** |
+
+**Reading the result**
+
+* Green tick next to your commit in the Actions tab = every check passed; the Pages site (and therefore
+  the phone update) is fresh.
+* Red cross = a suite failed. Open the run → the failing step prints the suite's `FAIL (n)` list, which
+  names the exact expectation, e.g. `J10 the list below shows only the trip's entries`. Nothing is
+  deployed while it is red, so your phone keeps the last good version.
+* In a hurry / flaky network: **Actions → Deploy RupeeFlow → Run workflow → tick `skip_tests`** deploys
+  immediately without the browser suite. Use it deliberately, not by habit.
+
+**Running the same thing locally**
+
+```bash
+bash tools/setup-tests.sh     # once per machine: Playwright + Chromium
+./serve.sh &                  # the app on http://localhost:8080
+npm test                      # every suite; per-suite table at the end
+node tests/options.js         # or one suite on its own
+```

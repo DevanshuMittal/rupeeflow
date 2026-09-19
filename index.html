@@ -500,7 +500,7 @@ textarea{min-height:64px;resize:vertical}
 
 /* Bump this on every release — tools/bump.js updates it here and in sw.js.
    The running build is compared against the deployed one to offer in-app updates. */
-const APP_BUILD = '1.4.6+2026-09-19.2';
+const APP_BUILD = '1.4.7+2026-09-19.3';
 
 /* ---------------------------------- 1. utils ------------------------------- */
 const $  = (s, r = document) => r.querySelector(s);
@@ -1517,7 +1517,7 @@ function txRow(t, opt = {}) {
     <div class="av" style="background:${hexA(c.color, .14)}">${c.e}</div>
     <div class="grow">
       <div class="t1">${esc(t.note || c.name)}</div>
-      <div class="t2">${esc(c.name)} · ${a.e} ${esc(a.name)}${t.pass ? ` · <span class="tag p">🤝 ${esc(passShares(t).map(x => x.who).join(' + '))}${t.pass === 2 ? ' · settled' : ''}</span>` : ''}${t.reimb === 1 ? ' · <span class="tag w">reimb. due</span>' : ''}${(t.tags || []).includes('delhi') ? ' · <span class="tag p">delhi</span>' : ''}</div>
+      <div class="t2">${esc(c.name)} · ${a.e} ${esc(a.name)}${t.pass ? ` · <span class="tag p">🤝 ${esc(passShares(t).map(x => x.who).join(' + '))}${t.pass === 2 ? ' · settled' : ''}</span>` : ''}${t.reimb === 1 ? ' · <span class="tag w">reimb. due</span>' : ''}${(t.tags || []).slice(0, 3).map(x => ` · <span class="tag p">#${esc(x)}</span>`).join('')}</div>
     </div>
     <div class="right">
       <div class="amt ${amtCls}">${sign}${money(t.amount)}</div>
@@ -1589,8 +1589,8 @@ function insights(ym) {
   else if (pHeld < 0) out.push({ e: '🤝', t: `You are <b>${money(-pHeld)}</b> out of pocket for pass-through spends — it is not counted as your expense, and their money clears it when it arrives.` });
   const over = Object.entries(S.budgets[ym] || {}).filter(([id, lim]) => { const sp = sum(monthTx(ym).filter(t => t.type === 'expense' && t.cat === id), t => t.amount); return lim && sp > lim; });
   if (over.length) out.push({ e: '🚧', t: `<b>${over.length}</b> budget${over.length > 1 ? 's' : ''} exceeded: ${over.slice(0, 3).map(([id]) => esc(catById(id).name)).join(', ')}.` });
-  const delhi = sum(S.transactions.filter(t => (t.tags || []).includes('delhi') && t.type === 'expense'), t => t.amount);
-  if (delhi > 0) out.push({ e: '🛫', t: `Trips & travel between <b>${esc(S.settings.workCity)}</b> and <b>${esc(S.settings.homeCity)}</b> have cost ${money(delhi)} so far — expected, but budget for it.` });
+  const tagTop = tagTotals(monthTx(curYM)).filter(x => x.spent > 0)[0];
+  if (tagTop) out.push({ e: '🏝', t: `<b>#${esc(tagTop.tag)}</b> has cost ${money(tagTop.spent)} this month across ${tagTop.count} ${tagTop.count === 1 ? 'entry' : 'entries'} — tagged trips stay together whatever the category.` });
   const em = S.goals.find(g => /emergency/i.test(g.name));
   if (em) out.push({ e: '🛟', t: `Emergency fund is at <b>${pct(em.saved, em.target).toFixed(0)}%</b> (${money(em.saved)}/${money(em.target)}). ${em.saved >= cur.exp * 6 ? 'Six months of expenses covered — you can invest surplus now.' : `You need about ${money(Math.max(0, cur.exp * 6 - em.saved))} more to hit the 6-month mark.`}` });
   return out.slice(0, 7);
@@ -1806,6 +1806,39 @@ function upcomingBills(days) {
 /* ============================================================================
    10. RECORDS
    ========================================================================== */
+/* ---- tags & trips -----------------------------------------------------------
+   A tag is how a trip is stored: #goa-trip on every entry, whatever the category
+   (travel, food, rent, shopping), payment mode or month. These helpers turn that
+   tag into "what did the trip cost, and on what". ------------------------------ */
+const tagTx = (tag, list) => (list || S.transactions).filter(t => (t.tags || []).includes(tag));
+function tagTotals(list) {                       /* per tag; pass-through money left out */
+  const by = {};
+  for (const t of (list || S.transactions)) for (const tag of (t.tags || [])) {
+    const r = by[tag] || (by[tag] = { tag, count: 0, spent: 0, received: 0, pass: 0, first: null, last: null });
+    r.count++;
+    if (t.pass) r.pass += t.amount;
+    else if (t.type === 'expense') r.spent += t.amount;
+    else if (t.type === 'income') r.received += t.amount;
+    if (!r.first || t.date < r.first) r.first = t.date;
+    if (!r.last || t.date > r.last) r.last = t.date;
+  }
+  return Object.values(by).sort((a, b) => b.spent - a.spent || b.received - a.received);
+}
+function tagSummary(tag) {
+  const list = tagTx(tag).slice().sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
+  const mine = list.filter(t => !t.pass);        /* someone else's money is not the trip's cost */
+  const exp = mine.filter(t => t.type === 'expense');
+  const rows = (arr, key) => {
+    const g = groupBy(arr, key);
+    return Object.entries(g).map(([id, a]) => ({ id, amt: sum(a, t => t.amount), n: a.length })).sort((a, b) => b.amt - a.amt);
+  };
+  return {
+    tag, list, count: list.length, spent: sum(exp, t => t.amount), received: sum(mine.filter(t => t.type === 'income'), t => t.amount),
+    catRows: rows(exp, t => t.cat), accRows: rows(exp, t => t.acc),
+    passTotal: sum(list.filter(t => t.pass), t => t.amount), reimb: sum(list.filter(t => t.reimb === 1), t => t.amount),
+    first: list.length ? list[0].date : null, last: list.length ? list[list.length - 1].date : null
+  };
+}
 let recFilter = { type: 'all', cat: '', acc: '', tag: '', q: '' };
 window.renderRecords = function () {
   const ym = curYM;
@@ -1818,6 +1851,8 @@ window.renderRecords = function () {
   list = list.sort(sortTxDesc);
   const cur = totals(list);
   const active = Object.entries(recFilter).filter(([k, v]) => v && v !== 'all').length;
+  /* every tag used this month (plus the registry, so an unused tag stays clickable) */
+  const tagsHere = uniq([...S.tags, ...monthTx(ym).reduce((a, t) => a.concat(t.tags || []), [])]);
   $('#s-records').innerHTML = `
   ${monthNav(ym)}
   <div class="card pad" style="margin-top:8px">
@@ -1854,11 +1889,38 @@ window.renderRecords = function () {
       <span class="chip ${!recFilter.cat ? 'on' : ''}" data-f="cat" data-v="">All categories</span>
       ${catSpend(ym, 'expense').slice(0, 10).map(c => `<span class="chip ${recFilter.cat === c.cat.id ? 'on' : ''}" data-f="cat" data-v="${c.cat.id}">${c.cat.e} ${esc(c.cat.name)}</span>`).join('')}
     </div>` : ''}
-    ${S.tags.length ? `<div class="chips" style="margin-top:2px">
+    ${tagsHere.length ? `<div class="chips" style="margin-top:2px">
       <span class="chip ${!recFilter.tag ? 'on' : ''}" data-f="tag" data-v="">All tags</span>
-      ${S.tags.map(t => `<span class="chip ${recFilter.tag === t ? 'on' : ''}" data-f="tag" data-v="${esc(t)}">#${esc(t)}</span>`).join('')}
+      ${tagsHere.map(t => { const tt = tagTotals(monthTx(ym)).find(x => x.tag === t);
+        return `<span class="chip ${recFilter.tag === t ? 'on' : ''}" data-f="tag" data-v="${esc(t)}">#${esc(t)}${tt && tt.spent ? ' · ' + inrC(tt.spent) : ''}</span>`; }).join('')}
     </div>` : ''}
   </div>
+  ${recFilter.tag ? (() => {
+    const s2 = tagSummary(recFilter.tag);
+    if (!s2.count) return '';
+    const bar = (label, amt, max, color) => `<div style="margin-top:9px">
+      <div class="between tiny"><span style="font-weight:650">${label}</span><b>${money(amt)}</b></div>
+      <div class="progress" style="margin-top:4px"><i style="width:${clamp(pct(amt, max), 3, 100)}%;background:${color}"></i></div></div>`;
+    const maxCat = Math.max(1, ...s2.catRows.map(r => r.amt)), maxAcc = Math.max(1, ...s2.accRows.map(r => r.amt));
+    return `<div class="card pad" style="margin-top:12px">
+      <div class="between">
+        <div><div class="tiny muted" style="font-weight:700">TAG / TRIP</div>
+          <h4 style="margin-top:2px">🏝 #${esc(s2.tag)}</h4>
+          <div class="tiny muted">${s2.count} ${s2.count === 1 ? 'entry' : 'entries'}${s2.first ? ' · ' + dayLabel(s2.first) + (s2.last !== s2.first ? ' – ' + dayLabel(s2.last) : '') : ''} · all months</div></div>
+        <div class="right"><div class="tiny muted" style="font-weight:700">SPENT</div><b style="font-size:19px">${money(s2.spent)}</b>
+          ${s2.received ? `<div class="tiny pos">received ${money(s2.received)}</div>` : ''}</div>
+      </div>
+      ${s2.catRows.length ? `<div class="sep"></div><div class="tiny muted" style="font-weight:700">BY EXPENSE TYPE</div>
+        ${s2.catRows.slice(0, 6).map(r => bar(catById(r.id).e + ' ' + esc(catById(r.id).name) + (r.n > 1 ? ` <span class="muted">×${r.n}</span>` : ''), r.amt, maxCat, catById(r.id).color)).join('')}` : ''}
+      ${s2.accRows.length ? `<div class="sep"></div><div class="tiny muted" style="font-weight:700">BY PAYMENT MODE</div>
+        ${s2.accRows.slice(0, 6).map(r => bar(accById(r.id).e + ' ' + esc(accById(r.id).name), r.amt, maxAcc, hexA(themeById(S.settings.theme).a, .75))).join('')}` : ''}
+      ${s2.passTotal ? `<div class="sep"></div><div class="tiny muted">🤝 ${money(s2.passTotal)} pass-through entries also carry this tag — left out of the trip total, they are not your money.</div>` : ''}
+      ${s2.reimb ? `<div class="tiny muted" style="margin-top:4px">🧾 ${money(s2.reimb)} of it is claimable — see Reimbursements.</div>` : ''}
+      <div class="row" style="gap:8px;margin-top:12px">
+        <button class="btn primary sm grow" data-act="addtag" data-tag="${esc(s2.tag)}">＋ Log for this trip</button>
+        <button class="btn soft sm grow" data-act="tagcsv" data-tag="${esc(s2.tag)}">⬇ Trip CSV</button></div>
+    </div>`;
+  })() : ''}
   <div class="section">
     <div class="section-head"><h2>${list.length} transaction${list.length === 1 ? '' : 's'}</h2>
       <span class="tiny muted" style="margin-left:auto">${esc(monLabel(ym))}</span></div>
@@ -1898,7 +1960,7 @@ function txSheet(id, preset) {
     shares: (editing.people || []).length ? editing.people.map(x => ({ who: x.who, amt: x.amt })) : []
   }) : {
     id: null, type: (preset && preset.type) || 'expense', amount: 0, cat: '', acc: (preset && preset.acc) || (S.accounts[0] || {}).id,
-    to: (S.accounts[1] || S.accounts[0] || {}).id, date: todayISO(), note: '', tags: [], reimb: 0,
+    to: (S.accounts[1] || S.accounts[0] || {}).id, date: todayISO(), note: '', tags: (preset && preset.tags) || [], reimb: 0,
     pass: (preset && preset.pass) || 0, who: (preset && preset.who) || '', split: (preset && preset.split) || 0, shares: (preset && preset.shares) || []
   };
   let expr = draft.amount ? String(draft.amount) : '';
@@ -2240,8 +2302,7 @@ window.renderAnalytics = function () {
   const mxV = Math.max(0, ...daily), mxI = daily.indexOf(mxV);
   const bigDay = mxV > 0 ? `${dayLabel(dates[mxI])} (${inr(mxV)})` : '—';
   const zeroDays = daily.slice(0, today).filter(x => x === 0).length;
-  const delhiTrips = S.transactions.filter(x => (x.tags || []).includes('delhi'));
-  const tripCost = sum(delhiTrips, x => x.amount);
+  const tagRows = tagTotals(S.transactions).filter(x => x.spent || x.received);
 
   $('#s-analytics').innerHTML = `
   ${monthNav(ym)}
@@ -2341,10 +2402,11 @@ window.renderAnalytics = function () {
     ${S.recurring.filter(r => r.active).slice(0, 6).map(r => `<div class="kv"><span>${catById(r.cat).e} ${esc(r.name)}</span><b>${inr(r.amount)} · ${r.day}${['st', 'nd', 'rd'][((r.day % 10) - 1) % 3] || 'th'}</b></div>`).join('')}
   </div>
   <div class="card pad" style="margin-top:12px">
-    <h4>${esc(S.settings.workCity)} ↔ ${esc(S.settings.homeCity)} trips</h4>
-    <div class="kv"><span>Trips logged</span><b>${uniq(delhiTrips.map(x => x.date.slice(0, 7))).length} months</b></div>
-    <div class="kv"><span>Total travel spend</span><b>${money(tripCost)}</b></div>
-    <div class="kv"><span>Avg per trip month</span><b>${money(tripCost / Math.max(1, uniq(delhiTrips.map(x => x.date.slice(0, 7))).length))}</b></div>
+    <div class="between"><h4>Trips & tags</h4><span class="tiny muted">all time · tap to open</span></div>
+    <div class="tiny muted" style="margin:4px 0 2px">Tag a trip (<b>#goa-trip</b>) on every entry — flights, food, rent, shopping — and it shows up here whatever the category or payment mode.</div>
+    ${tagRows.length ? tagRows.slice(0, 6).map(x => `<div data-act="tagjump" data-tag="${esc(x.tag)}" style="cursor:pointer">
+      ${statBar('#' + x.tag + (x.count > 1 ? '  ·  ' + x.count + ' entries' : ''), x.spent || x.received, tagRows[0].spent || tagRows[0].received || 1, 'var(--accent)')}</div>`).join('')
+      : '<div class="muted sm">No tagged entries yet — add a tag like #goa-trip in the add sheet.</div>'}
     <div class="sep"></div>
     <div class="kv"><span>Reimbursements outstanding</span><b class="neg">${money(reimbPending())}</b></div>
     <div class="kv"><span>Reimbursements settled</span><b class="pos">${money(reimbSettled())}</b></div>
@@ -4490,6 +4552,9 @@ document.addEventListener('click', (ev) => {
     case 'back': return go('more');
     case 'thismonth': curYM = currentYM(); return go('home');
     case 'add': return txSheet(null, { type: act.dataset.type || 'expense' });
+    case 'addtag': return txSheet(null, { type: act.dataset.type || 'expense', tags: String(act.dataset.tag || '').split(',').filter(Boolean) });
+    case 'tagcsv': { const tg = act.dataset.tag || ''; return download(`rupeeflow-tag-${tg.replace(/[^a-z0-9-]+/gi, '-')}.csv`, csvFor(tagTx(tg))); }
+    case 'tagjump': { recFilter = Object.assign({}, recFilter, { tag: act.dataset.tag || '', q: '' }); return go('records'); }
     case 'acc': return accSheet(id);
     case 'addacc': return accSheet(null);
     case 'goal': return goalSheet(id);
@@ -4917,6 +4982,7 @@ function installAPI() {
       const rec = Object.assign({ id: uid('t'), type: 'expense', amount: 0, cat: null, acc: (S.accounts[0] || {}).id, to: null,
         date: todayISO(), time: new Date().toTimeString().slice(0, 5), note: '', tags: [], fields: {}, reimb: 0,
         created: Date.now(), updated: Date.now() }, tx);
+      for (const tg of (rec.tags || [])) if (!S.tags.includes(tg)) S.tags.push(tg);
       const fired = applyRules(rec);
       S.transactions.push(rec); save(true); rfEmit('change', rec); rerender();
       return { transaction: rec, rulesApplied: fired };

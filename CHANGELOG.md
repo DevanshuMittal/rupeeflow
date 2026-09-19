@@ -3,6 +3,51 @@
 All notable changes to RupeeFlow. The build stamp shown in **Settings → About** matches the entries here,
 so you can confirm at a glance which version your phone is running.
 
+## 1.4.7 — 2026-09-19  ·  build `1.4.7+2026-09-19.3`
+
+Two things: trips are now first-class, and the whole test suite runs in GitHub Actions on every push.
+
+**Logging a trip (travel, food, rent, shopping — one trip, one tag)**
+
+- **A tag is the trip.** Add `#goa-trip` once in the add sheet (*New tag*), then tag every entry —
+  flights, dinners, the villa, souvenirs. Category stays what it is (Travel, Food, Rent, Shopping),
+  the **payment mode** stays your account/card, and the date, note, custom fields, reimbursement flag
+  and pass-through flag all keep working exactly as before. Nothing new to learn: the tag *is* the trip.
+- **Open the tag and the trip explains itself.** Records → tap the trip tag (chips now show what each
+  tag has cost this month) → a **Trip summary** appears above the list: total spent, the date range,
+  **by expense type** (bars per category, with ×counts), **by payment mode** (bars per account), how
+  much of it is reimbursable, and — if someone else's money carries the same tag — a line saying that
+  ₹X of it is pass-through and deliberately **not** counted in the trip total.
+- **“＋ Log for this trip”** opens the add sheet with the tag already ticked, for the next thing you buy,
+  so a 20-entry trip never needs the tag typed twice. **“⬇ Trip CSV”** exports that trip alone — every
+  column the app stores (type, category, payment mode, amount, note, tags, reimbursement, pass-through,
+  your custom fields), ready for a spreadsheet.
+- **Trips & tags** now live in **Analytics → Deep dive**: every tag with what it has cost all time, tap
+  to open it. The old hard-coded “Delhi trips” block from the demo data is gone, and the monthly insight
+  now names your own top tagged trip. Records rows show their tags (`#goa-trip`) instead of only the demo
+  one, and tags used by imported data appear in the filter even if the registry missed them.
+- Tests: `tests/options.js` 156 → **174** (group **J**: a four-category, three-payment-mode trip stored
+  and totalled, pass-through excluded from the trip total, the summary card, the pre-filled
+  “log for this trip”, the trip CSV with custom fields, masking while balances are hidden, and the
+  Analytics entry point).
+
+**Every test case, in the workflow**
+
+- One command runs everything: **`npm test`** → `tests/all.js` runs all ten suites in order, prints a
+  per-suite table and **exits non-zero if anything fails**. **427 checks** total.
+- **`.github/workflows/test.yml`** now runs on **pushes to main** as well as pull requests and manual
+  runs (it used to be pull-request only), and it runs the *same* `npm test` — no drifting list of steps.
+- **`.github/workflows/deploy.yml`** gates deployment on the full suite: `validate` (the seconds-long
+  integrity gate) and a new **`browsers`** job must both pass before Pages deploys, so a broken commit
+  can never reach the phone update. In a hurry, *Actions → Deploy RupeeFlow → Run workflow* has a
+  **skip_tests** switch for the fast path.
+- The suites were hard-wired to this workspace's Playwright path, which would have made them fail on
+  GitHub's runners. They now resolve Playwright themselves (`tests/lib/pw.js`) and the failure message
+  prints the one command that fixes it. `tools/setup-tests.sh` sets a fresh machine up in one go.
+- Fixed while testing: the Records tag row now lists tags actually used that month (an imported or
+  API-added tag could be missing from the chip row), `RF.add()` registers new tags like the add sheet
+  does, and the Analytics tag bars no longer print raw markup as text.
+
 ## 1.4.6 — 2026-09-19  ·  build `1.4.6+2026-09-19.1`
 
 Quick templates can be pass-through too.

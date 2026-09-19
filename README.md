@@ -23,7 +23,7 @@ and prints a copyable diagnostic report.
 | **Works offline** | Yes — everything is cached on the phone (PWA installable) |
 | **Backend** | Google Sheets + Drive, called directly from the browser (no server, no fees) |
 | **Currency / FY** | ₹ with Indian digit grouping (₹1,45,000 / ₹1.45L / ₹1.2Cr), April–March |
-| **Tested** | 392 automated tests passing (48 app + 59 customisation + 156 options + 33 profiles/decoy + 31 sheet setup + 23 desktop layout + 19 two-device sync + 13 setup checker + 10 update pipeline) + a 17-assertion CI gate |
+| **Tested** | **427 checks** across 10 suites — one command: `npm test` (48 app + 59 customisation + 174 options/trips/pass-through + 33 profiles/decoy + 31 sheet setup + 23 desktop layout + 19 two-device sync + 13 setup checker + 10 update pipeline + the 17-assertion integrity gate) |
 
 ---
 
@@ -62,6 +62,7 @@ and prints a copyable diagnostic report.
 | `43-passthrough-month-summary.png`, `44-ledger-month-summary.png` | Each person's this-month vs overall figures, and the month divider in their running balance |
 | `45-budget-exact.png` | The budget editor showing "Adds up to exactly ₹15,000 across 23 categories" |
 | `46-template-passthrough.png`, `47-template-chip-add-sheet.png` | A template that belongs to a person, and the marked chip it puts in the add sheet |
+| `49-trip-summary.png`, `50-trips-analytics.png` | A trip as one tag: total, by expense type, by payment mode — and every trip in Analytics |
 | `15-customise-layout.png` … `21-customise-dev.png` | Layout, fields, templates, rules, format, theme, dev panel |
 | `22-rule-editor.png`, `23-rule-json.png` | Rule builder + JSON editor |
 | `24-add-sheet-custom.png` | Add sheet with templates + custom fields |
@@ -287,6 +288,21 @@ Install RupeeFlow on the new phone → **More → Drive Sync** → paste the sam
 * Set a single category on its own from the budgets screen, and tick *Apply to future months* to save
   it as your default
 
+### Logging a trip (or any project) with tags
+One tag is the whole trip. Add `#goa-trip` once in the add sheet (*New tag*), then tag every entry —
+flight, dinners, the villa, souvenirs:
+* **Category stays what it is** (Travel, Food, Rent, Shopping), so budgets and category charts keep
+  working, and the **payment mode** keeps your account cash flow honest
+* Everything else rides along as usual: amount, date and time, note, tags, your custom fields
+  (booking ref, travellers), reimbursable, even pass-through if someone else's money is in the mix
+* **Open the trip**: Records → tap the tag. The chips show what each tag has cost this month, and the
+  tag opens a **trip summary** — total spent with its date range, **by expense type** and **by payment
+  mode** as bars, how much is claimable, and a note when some entries were pass-through (deliberately
+  not counted in the trip total)
+* **“＋ Log for this trip”** opens the add sheet with the tag already ticked, and **“⬇ Trip CSV”** exports
+  that trip alone with every stored column
+* **Analytics → Deep dive → Trips & tags** lists every tag with what it has cost, all time — tap to open
+
 ### Templates that belong to someone
 * **Customise → Templates** has the same **🤝 Pass-through** switch as the add sheet: pick the person
   once and every tap books it into their block — *"Papa medicines ₹4,000"* becomes one tap that can
@@ -296,6 +312,16 @@ Install RupeeFlow on the new phone → **More → Drive Sync** → paste the sam
   person so you can still adjust the amount
 * A pass-through template with nobody named is refused rather than silently saved; a name you type is
   added to your people list
+
+### Tests that run themselves on every push
+* `npm test` runs **all ten suites** (427 checks) through one runner (`tests/all.js`) and exits non-zero
+  if anything fails — the same command you can run locally
+* **Push to main → GitHub Actions runs the whole suite before deploying.** `Deploy RupeeFlow` has two
+  gates: `validate` (a seconds-long integrity check) and `browsers` (every suite in a real Chromium).
+  Pages deploys only when both are green, so a broken commit can never reach the phone update. The
+  **Test suite** workflow runs the same thing on pull requests and on demand
+* In a hurry: *Actions → Deploy RupeeFlow → Run workflow* → tick **skip_tests** for the fast path
+* Fresh machine? `bash tools/setup-tests.sh`, then `./serve.sh` and `npm test`
 
 **Settings → Data & backup** gives you one sheet where you tick exactly what goes — transactions,
 pass-through entries only, reimbursement claims, account opening balances, budget limits, bills,
@@ -386,7 +412,9 @@ finance-tracker/
 └─ tests/
    ├─ qa.js              ← 48 end-to-end interaction tests (Playwright)
    ├─ custom.js          ← 59 tests for fields / rules / templates / layout / theme / API
-   ├─ options.js         ← 156 tests for hidden balances, exact budgets, clear/reset, pass-through (many people), sign-in-once, pass-through templates
+   ├─ options.js         ← 174 tests for hidden balances, exact budgets, clear/reset, trips, pass-through (many people), sign-in-once, templates
+   ├─ lib/pw.js          ← finds Playwright wherever it is installed (laptop, CI, sandbox)
+   ├─ all.js             ← runs every suite in order — this is what `npm test` and CI run
    ├─ setupcheck.js      ← 13 tests for the setup checker itself
    ├─ update.js          ← 10 tests proving the in-app update flow works
    ├─ ci-check.js        ← 17-assertion integrity gate used by GitHub Actions
@@ -404,7 +432,8 @@ node tests/custom.js      # customisation layer          (59 tests)
 node tests/setupcheck.js  # setup checker behaviour      (13 tests)
 node tests/update.js      # in-app update pipeline       (10 tests — see GITHUB.md §10)
 node tests/twodevice.js   # phone + laptop sync          (19 tests, mocked Google — no credentials)
-node tests/options.js     # hide/budget/clear/pass-through/sign-in/templates (156 tests)
+npm test                  # EVERY suite, in order (427 checks) — the same command CI runs
+node tests/options.js     # hide/budget/trips/pass-through/sign-in/templates (174 tests)
 node tests/profiles.js    # profiles, PIN gate, decoy    (33 tests — proves real data never leaks)
 node tests/desktop.js     # laptop layout, phone intact  (23 tests)
 node tests/sheetsetup.js  # Sheet creation + API errors (31 tests, mocked Google)
