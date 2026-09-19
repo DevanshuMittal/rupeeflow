@@ -23,7 +23,7 @@ and prints a copyable diagnostic report.
 | **Works offline** | Yes — everything is cached on the phone (PWA installable) |
 | **Backend** | Google Sheets + Drive, called directly from the browser (no server, no fees) |
 | **Currency / FY** | ₹ with Indian digit grouping (₹1,45,000 / ₹1.45L / ₹1.2Cr), April–March |
-| **Tested** | **427 checks** across 10 suites — one command: `npm test` (48 app + 59 customisation + 174 options/trips/pass-through + 33 profiles/decoy + 31 sheet setup + 23 desktop layout + 19 two-device sync + 13 setup checker + 10 update pipeline + the 17-assertion integrity gate) |
+| **Tested** | **455 checks** across 10 suites — one command: `npm test` (48 app + 59 customisation + 202 options/trips/pass-through/budgets + 33 profiles/decoy + 31 sheet setup + 23 desktop layout + 19 two-device sync + 13 setup checker + 10 update pipeline + the 17-assertion integrity gate) |
 
 ---
 
@@ -256,8 +256,13 @@ Install RupeeFlow on the new phone → **More → Drive Sync** → paste the sam
 * **Either order works**: pay for their medicines *before* their money arrives and the block shows
   **"you are out of pocket"**; record their transfer afterwards and it clears. Each person's
   **ledger** shows every entry with a **running balance**, so −₹6,600 → +₹6,000 → −₹600 is obvious
-* Settle **per person** ("Settle 3" on their block) or everything at once; settling is state, never an
-  income entry
+* **Settle means "this one is squared up"** — bookkeeping only, no money moves, and it just stops
+  counting toward the balance you hold. Both directions exist at every level: **Settle this payment** /
+  **↩︎ Reopen** per payment in the ledger, **Settle 3** / **↩︎ Reopen all** per person, the entry sheet's
+  settled/reopen toggle, and **Settle all** / **Reopen all** for everything
+* 🚫 **Pass-through is never part of your spending figures** — not the expense total, not budget spend,
+  not the daily-burn chart. Where the two numbers sit together the app says so in words:
+  *"🤝 ₹27,000 pass-through this month — someone else's money, left out of the figures above"*
 * **Every person carries their own summary — this month beside overall.** Their block shows what you
   spent for them and received from them *this month* (entries, still open) next to the same figures
   for all time; opening them gives a **Summary** table with month and all-time columns, net included,
@@ -302,6 +307,18 @@ flight, dinners, the villa, souvenirs:
 * **“＋ Log for this trip”** opens the add sheet with the tag already ticked, and **“⬇ Trip CSV”** exports
   that trip alone with every stored column
 * **Analytics → Deep dive → Trips & tags** lists every tag with what it has cost, all time — tap to open
+
+### Budgets: one default for every month, and colours that make sense
+* **Budgets → ⚙️ Every month** stores the numbers that apply to *all* months — type the total (say
+  ₹15,000), choose *keep my split* / *by last month's spending* / *evenly*, done. Months you never touched
+  follow it, **including next month**; a month you already customised keeps its own, and its banner has
+  **↩︎ Use the defaults this month**
+* Editing one category inside the defaults re-splits the rest — **rent ₹12,000 inside a ₹15,000 month**
+  leaves ₹3,000 for the others, and the app says so
+* **Increasing the budget later starts from the current month** (the *Start from <month>* switch, on by
+  default): past months keep the numbers you actually used
+* **Red means over the limit.** Exactly the limit is amber *at limit*, 90%+ is *almost*, 60%+ is *on
+  track*, below that *healthy* — spending your whole envelope is never called a failure
 
 ### Templates that belong to someone
 * **Customise → Templates** has the same **🤝 Pass-through** switch as the add sheet: pick the person
@@ -412,7 +429,7 @@ finance-tracker/
 └─ tests/
    ├─ qa.js              ← 48 end-to-end interaction tests (Playwright)
    ├─ custom.js          ← 59 tests for fields / rules / templates / layout / theme / API
-   ├─ options.js         ← 174 tests for hidden balances, exact budgets, clear/reset, trips, pass-through (many people), sign-in-once, templates
+   ├─ options.js         ← 202 tests for hidden balances, exact budgets, monthly defaults, clear/reset, trips, pass-through settle/reopen, sign-in-once, templates
    ├─ lib/pw.js          ← finds Playwright wherever it is installed (laptop, CI, sandbox)
    ├─ all.js             ← runs every suite in order — this is what `npm test` and CI run
    ├─ setupcheck.js      ← 13 tests for the setup checker itself
@@ -432,8 +449,8 @@ node tests/custom.js      # customisation layer          (59 tests)
 node tests/setupcheck.js  # setup checker behaviour      (13 tests)
 node tests/update.js      # in-app update pipeline       (10 tests — see GITHUB.md §10)
 node tests/twodevice.js   # phone + laptop sync          (19 tests, mocked Google — no credentials)
-npm test                  # EVERY suite, in order (427 checks) — the same command CI runs
-node tests/options.js     # hide/budget/trips/pass-through/sign-in/templates (174 tests)
+npm test                  # EVERY suite, in order (455 checks) — the same command CI runs
+node tests/options.js     # hide/budget/defaults/trips/pass-through/sign-in (202 tests)
 node tests/profiles.js    # profiles, PIN gate, decoy    (33 tests — proves real data never leaks)
 node tests/desktop.js     # laptop layout, phone intact  (23 tests)
 node tests/sheetsetup.js  # Sheet creation + API errors (31 tests, mocked Google)

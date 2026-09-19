@@ -500,7 +500,7 @@ textarea{min-height:64px;resize:vertical}
 
 /* Bump this on every release — tools/bump.js updates it here and in sw.js.
    The running build is compared against the deployed one to offer in-app updates. */
-const APP_BUILD = '1.4.7+2026-09-19.3';
+const APP_BUILD = '1.4.8+2026-09-19.4';
 
 /* ---------------------------------- 1. utils ------------------------------- */
 const $  = (s, r = document) => r.querySelector(s);
@@ -1093,12 +1093,21 @@ function accBalance(id) {
 }
 const netWorth = () => sum(S.accounts, a => a.type === 'credit' ? -accBalance(a.id) : accBalance(a.id));
 const liquid = () => sum(S.accounts.filter(a => ['bank', 'wallet', 'cash'].includes(a.type)), a => accBalance(a.id));
+/* how much of a category's budget is spent *by you* — pass-through money never counts */
+const budgetSpentOf = (catId, ym) => sum(monthTx(ym || curYM).filter(t => t.type === 'expense' && t.cat === catId && !t.pass), t => t.amount);
 const budgetFor = (ym, catId) => { const b = S.budgets[ym] || {}; if (b[catId] != null) return b[catId]; const d = S.budgets['default'] || {}; return d[catId] != null ? d[catId] : (DEFAULT_BUDGETS[catId] || 0); };
 /* ---- pass-through money ----------------------------------------------------
    Money that is not yours: it arrives so you can run someone else's spends
    (father's rent, a friend's booking). It must move real account balances but
    must never be counted as your income, expense, budget spend or savings. */
 const passList = () => S.transactions.filter(t => t.pass);
+/* "why is my expense not the total I spent?" — answered on the screens that show it */
+const passMonthTotal = (ym) => sum(monthTx(ym || curYM).filter(t => t.pass), t => t.amount);
+const passNoteHtml = (ym) => {
+  const amt = passMonthTotal(ym);
+  if (!amt) return '';
+  return `<div class="tiny muted" style="margin-top:6px">🤝 ${money(amt)} pass-through this month — someone else&rsquo;s money, left out of the figures above <button class="link" data-nav="pass">see it</button></div>`;
+};
 const passWhoOf = (t) => (t.who || '').trim() || 'Unnamed';
 /* One entry can belong to more than one person (father's rent + mother's medicines paid in a
    single UPI transfer). `people` holds the split; a plain entry just uses `who`. */
@@ -1121,6 +1130,24 @@ function passShares(t) {
 function passShareOpen(t, who) {
   const sh = passShares(t).find(x => x.who === who);
   return sh ? !sh.settled : false;
+}
+/* a sheet's body is a string built when it opened, so after settling from inside a sheet we
+   close it and open it again — otherwise the numbers on screen would be stale. */
+function refreshLedgerSheet(who) {
+  const hadSheet = sheetStack.length > 0;
+  if (hadSheet) closeSheet();
+  save(true); rerender();
+  if (hadSheet) setTimeout(() => passLedgerSheet(who), 90);
+}
+/* the other direction: reopen a share (or a whole entry) so the balance counts again */
+function passUnsettleShare(t, who) {
+  const shares = passShares(t);
+  if (shares.length > 1 || (t.people || []).length) {
+    t.people = shares.map(x => ({ who: x.who, amt: x.amt, settled: (who ? x.who === who : true) ? 0 : x.settled }));
+  }
+  if (!who || (t.people || []).every(x => !x.settled) || !(t.people || []).length) t.pass = 1;
+  t.updated = Date.now();
+  return true;
 }
 function passSettleShare(t, who) {
   const shares = passShares(t);
@@ -1301,7 +1328,12 @@ function heatmap(daily) {
   }
   return `<div class="hm">${out}</div>`;
 }
-function progressColor(p) { return p >= 100 ? 'var(--danger)' : p >= 85 ? 'var(--warn)' : 'var(--accent)'; }
+/* Red means *over* the limit. Spending exactly the limit is not over, so it is amber, not red. */
+function progressColor(p) { return p > 100 ? 'var(--danger)' : p >= 90 ? 'var(--warn)' : 'var(--pos)'; }
+const budgetTag = p => p > 100 ? '<span class="tag d">over</span>'
+  : p >= 100 ? '<span class="tag w">at limit</span>'
+  : p >= 90 ? '<span class="tag w">almost</span>'
+  : p >= 60 ? '<span class="tag p">on track</span>' : '<span class="tag g">healthy</span>';
 function statBar(label, value, max, color, sub) {
   const p = clamp(pct(value, max), 0, 100);
   return `<div class="statbar">
@@ -1529,7 +1561,7 @@ function txGrouped(list, limit) {
   const keys = Object.keys(days).sort().reverse().slice(0, limit || 999);
   return keys.map(k => {
     const items = days[k].sort(sortTxDesc);
-    const inc = sum(items.filter(t => t.type === 'income'), t => t.amount), exp = sum(items.filter(t => t.type === 'expense'), t => t.amount);
+    const inc = sum(items.filter(t => t.type === 'income' && !t.pass), t => t.amount), exp = sum(items.filter(t => t.type === 'expense' && !t.pass), t => t.amount);
     return `<div class="daybar"><div class="d">${relDay(k) || dayLabel(k)} <span class="muted" style="font-weight:600">· ${esc(dayName(k).slice(0, 3))}</span></div>
       <div class="n">${exp ? '−' + money(exp) : ''}${inc && exp ? ' · ' : ''}${inc ? '+' + money(inc) : ''}</div></div>
       ${items.map(t => txRow(t)).join('')}`;
@@ -1577,7 +1609,7 @@ function insights(ym) {
     const rate = (cur.net / cur.inc) * 100;
     out.push({ e: rate >= 30 ? '🌱' : rate >= 15 ? '🙂' : '🚨', t: `Savings rate is <b>${rate.toFixed(1)}%</b> (${money(cur.net)} kept). ${rate >= 30 ? 'Outstanding — you are ahead of the 30% rule.' : rate >= 15 ? 'Healthy, but 30% would build your safety net faster.' : 'Below 15% — trim the flexible buckets below.'}` });
   }
-  const ws = sum(S.transactions.filter(t => ymOf(t.date) === ym && t.type === 'expense' && [0, 6].includes(dOf(t.date).getDay())), t => t.amount);
+  const ws = sum(S.transactions.filter(t => ymOf(t.date) === ym && t.type === 'expense' && !t.pass && [0, 6].includes(dOf(t.date).getDay())), t => t.amount);
   const wd = cur.exp - ws, nWd = Math.max(1, dim - Math.round(dim * 2 / 7)), nWe = Math.max(1, Math.round(dim * 2 / 7));
   if (ws > 0 && wd > 0) out.push({ e: '📆', t: `Weekends cost <b>${money(ws / nWe)}</b>/day vs <b>${money(wd / nWd)}</b>/day on weekdays — ${(ws / nWe) > (wd / nWd) ? 'your social spending is the pressure point.' : 'weekdays carry more weight right now.'}` });
   const subs = S.recurring.filter(r => r.active && ['c_subs', 'c_cloud', 'c_net'].includes(r.cat));
@@ -1587,7 +1619,7 @@ function insights(ym) {
   const pHeld = passHeld();
   if (pHeld > 0) out.push({ e: '🤝', t: `<b>${money(pHeld)}</b> is pass-through money you are holding for someone else. It is left out of your income, expenses and budgets.` });
   else if (pHeld < 0) out.push({ e: '🤝', t: `You are <b>${money(-pHeld)}</b> out of pocket for pass-through spends — it is not counted as your expense, and their money clears it when it arrives.` });
-  const over = Object.entries(S.budgets[ym] || {}).filter(([id, lim]) => { const sp = sum(monthTx(ym).filter(t => t.type === 'expense' && t.cat === id), t => t.amount); return lim && sp > lim; });
+  const over = Object.entries(S.budgets[ym] || {}).filter(([id, lim]) => { const sp = budgetSpentOf(id, ym); return lim && sp > lim; });
   if (over.length) out.push({ e: '🚧', t: `<b>${over.length}</b> budget${over.length > 1 ? 's' : ''} exceeded: ${over.slice(0, 3).map(([id]) => esc(catById(id).name)).join(', ')}.` });
   const tagTop = tagTotals(monthTx(curYM)).filter(x => x.spent > 0)[0];
   if (tagTop) out.push({ e: '🏝', t: `<b>#${esc(tagTop.tag)}</b> has cost ${money(tagTop.spent)} this month across ${tagTop.count} ${tagTop.count === 1 ? 'entry' : 'entries'} — tagged trips stay together whatever the category.` });
@@ -1651,7 +1683,9 @@ window.renderHome = function () {
   const cats = catSpend(ym, 'expense');
   const budgetIds = budgetIdsFor(ym);
   const budTotal = sum(budgetIds, id => budgetFor(ym, id));
-  const budSpent = sum(budgetIds, id => sum(monthTx(ym).filter(t => t.type === 'expense' && t.cat === id), t => t.amount));
+  /* pass-through money is not yours: never let it reach a budget figure (this is what made
+     "total spent" on this card disagree with the Expenses KPI) */
+  const budSpent = sum(budgetIds, id => sum(monthTx(ym).filter(t => t.type === 'expense' && t.cat === id && !t.pass), t => t.amount));
   const budPct = pct(budSpent, budTotal);
   const spendChart = cats.slice(0, 5);
   const last6 = [...Array(6)].map((_, i) => addMonths(ym, -5 + i)).map(m => ({ m, ...totals(monthTx(m)) }));
@@ -1712,6 +1746,8 @@ window.renderHome = function () {
       <div class="progress" style="margin-top:11px;height:10px"><i style="width:${clamp(budPct, 0, 100)}%;background:${progressColor(budPct)}"></i></div>
       <div class="between" style="margin-top:7px"><span class="sm" style="font-weight:700;color:${progressColor(budPct)}">${budPct.toFixed(0)}% used</span>
         <span class="sm muted">${budSpent > budTotal ? `<b class="neg">${money(budSpent - budTotal)} over</b>` : `${money(budTotal - budSpent)} left`}</span></div>
+      ${budTotal && cur.exp > budSpent ? `<div class="tiny muted" style="margin-top:6px">Counted here: the categories you budget. ${money(cur.exp - budSpent)} of spending sits outside them.</div>` : ''}
+      ${passNoteHtml(ym)}
       <div class="sep"></div>
       ${budgetIds.map(id => ({ id, lim: budgetFor(ym, id), sp: sum(monthTx(ym).filter(t => t.type === 'expense' && t.cat === id && !t.pass), t => t.amount) }))
         .filter(r => r.lim > 0).sort((a, b) => pct(b.sp, b.lim) - pct(a.sp, a.lim)).slice(0, 4)
@@ -1867,6 +1903,7 @@ window.renderRecords = function () {
       <span class="srcchip">🔁 ${money(cur.trf)} moved</span>
       <span class="grow right"><button class="btn ghost sm" data-act="csv">⬇ CSV</button></span>
     </div>
+    ${passNoteHtml(ym)}
   </div>
   <div class="section" style="margin-top:12px">
     <div class="row" style="gap:8px;margin-bottom:9px">
@@ -2254,13 +2291,18 @@ function txDetail(id) {
       ${Object.entries(t.fields || {}).filter(([k, v]) => v !== '' && v != null).map(([k, v]) => {
         const f = fieldByKey(k); return `<div class="kv"><span>${esc(f ? f.label : k)}</span><b>${esc(v)}</b></div>`; }).join('')}
       ${t.pass ? `<div class="kv"><span>Pass-through</span><b>${t.pass === 1 ? '<span class="tag w">open</span>' : '<span class="tag g">settled</span>'}</b></div>
-        ${passShares(t).map(sh => `<div class="kv"><span>${esc(sh.who)}${passShares(t).length > 1 ? ' (share)' : ''}</span><b>${money(sh.amt)}</b></div>`).join('')}
+        ${passShares(t).map(sh => `<div class="kv"><span>${esc(sh.who)}${passShares(t).length > 1 ? ' (share)' : ''}</span>
+          <b>${money(sh.amt)} ${sh.settled
+            ? `<span class="tiny" style="color:var(--accent)" data-act="passunsettlewho1" data-id="${t.id}" data-who="${esc(sh.who)}">· settled, reopen</span>`
+            : `<span class="tiny" style="color:var(--accent)" data-act="passsettlewho1" data-id="${t.id}" data-who="${esc(sh.who)}">· settle</span>`}</b></div>`).join('')}
         <div class="tiny muted" style="margin-top:6px">Left out of your income, expenses, budgets and savings rate.</div>` : ''}
       ${t.reimb ? `<div class="kv"><span>Reimbursement</span><b>${t.reimb === 1 ? '<span class="tag w">due</span>' : '<span class="tag g">settled</span>'}</b></div>` : ''}
       <div class="kv"><span>Last edited</span><b>${timeAgo(t.updated)}</b></div>
     </div>
     ${t.reimb === 1 ? `<div style="margin-top:12px"><button class="btn block soft" data-act="reimbsettle" data-id="${t.id}">✅ Mark reimbursement received</button></div>` : ''}
-    ${t.pass === 1 ? `<div style="margin-top:12px"><button class="btn block soft" data-act="passsettle" data-id="${t.id}">🤝 Mark this pass-through entry settled</button></div>` : ''}
+    ${t.pass ? (passShares(t).some(sh => !sh.settled)
+      ? `<div style="margin-top:12px"><button class="btn block soft" data-act="passsettle" data-id="${t.id}">✅ This is settled — money squared up</button></div>`
+      : `<div style="margin-top:12px"><button class="btn block soft" data-act="passunsettle" data-id="${t.id}">↩︎ Reopen — not settled after all</button></div>`) : ''}
     <div style="height:6px"></div>`,
     foot: `<button class="btn" data-x="del">🗑</button>
       <button class="btn grow" data-x="dup">Duplicate</button>
@@ -2286,17 +2328,17 @@ window.renderAnalytics = function () {
   const cats = catSpend(ym, 'expense'), incs = catSpend(ym, 'income');
   const dates = periodDates(ym), dim = dates.length;
   const today = ym === currentYM() ? periodElapsed(ym) : dim;
-  const byDay = groupBy(m.filter(x => x.type === 'expense'), x => x.date);
+  const byDay = groupBy(m.filter(x => x.type === 'expense' && !x.pass), x => x.date);   /* pass-through is not your burn */
   const daily = dates.map(k => sum(byDay[k] || [], x => x.amount));
   const cum = daily.map((_, i) => sum(daily.slice(0, i + 1)));
   const pmD = addMonths(ym, -1), pDates = periodDates(pmD);
-  const pByDay = groupBy(monthTx(pmD).filter(x => x.type === 'expense'), x => x.date);
+  const pByDay = groupBy(monthTx(pmD).filter(x => x.type === 'expense' && !x.pass), x => x.date);
   const pDaily = pDates.map(k => sum(pByDay[k] || [], x => x.amount));
   const pCum = Array.from({ length: dim }, (_, i) => sum(pDaily.slice(0, Math.min(i + 1, pDaily.length))));
   const wd = [0, 0, 0, 0, 0, 0, 0], wdN = [0, 0, 0, 0, 0, 0, 0];
   dates.slice(0, today).forEach((k, idx) => { const i = dOf(k).getDay(); wd[i] += daily[idx] || 0; wdN[i]++; });
   const last6 = [...Array(6)].map((_, i) => addMonths(ym, -5 + i)).map(x => ({ m: x, ...totals(monthTx(x)) }));
-  const notes = groupBy(m.filter(x => x.type === 'expense' && x.note), x => (x.note || '').split('—')[0].trim().slice(0, 28));
+  const notes = groupBy(m.filter(x => x.type === 'expense' && !x.pass && x.note), x => (x.note || '').split('—')[0].trim().slice(0, 28));
   const topNotes = Object.entries(notes).map(([k, v]) => ({ k, n: v.length, amt: sum(v, x => x.amount) })).sort((a, b) => b.amt - a.amt).slice(0, 6);
   const subsTotal = sum(S.recurring.filter(r => r.active && ['c_subs', 'c_cloud', 'c_net'].includes(r.cat)), r => r.amount);
   const mxV = Math.max(0, ...daily), mxI = daily.indexOf(mxV);
@@ -2414,7 +2456,7 @@ window.renderAnalytics = function () {
   </div>
   <div class="card pad" style="margin-top:12px">
     <h4>Budget adherence</h4>
-    ${Object.keys(S.budgets[ym] || {}).slice(0, 8).map(id => { const lim = budgetFor(ym, id); const sp = sum(m.filter(x => x.type === 'expense' && x.cat === id), x => x.amount);
+    ${uniq([...Object.keys(S.budgets[ym] || {}), ...Object.keys(S.budgets['default'] || {})]).slice(0, 8).map(id => { const lim = budgetFor(ym, id); const sp = budgetSpentOf(id, ym);
       return statBar(catById(id).name, sp, lim, progressColor(pct(sp, lim))); }).join('') || '<div class="muted sm">No budgets set for this month.</div>'}
   </div>` : ''}
   <div style="height:10px"></div>`;
@@ -2534,6 +2576,86 @@ function budgetWizard() {
     }
   });
 }
+/* Where the "every month" numbers live.
+   defaults (S.budgets.default) apply to any month you have NOT customised; saving here can
+   also clear the custom values from this month forward, so an increase starts now and the
+   months you already lived keep the numbers you actually used. */
+function budgetDefaultsSheet() {
+  const ym = curYM;
+  const ids = S.categories.filter(c => c.type === 'expense').map(c => c.id);
+  const def = S.budgets['default'] || {};
+  const curTotal = +S.budgets['defaultTotal'] || sum(ids, id => def[id] || 0) || sum(budgetIdsFor(ym), id => budgetFor(ym, id));
+  const defTotal = sum(ids, id => def[id] || 0);
+  const spendOf = id => sum(monthTx(addMonths(ym, -1)).filter(t => t.type === 'expense' && t.cat === id && !t.pass), t => t.amount);
+  let mode = 'keep';
+  const planned = () => {
+    const t = Math.max(0, Math.round(+($('#bdTotal') || {}).value || 0));
+    const base = ids.map(id => mode === 'even' ? 1 : mode === 'prop' ? spendOf(id) : (def[id] || budgetFor(ym, id) / Math.max(1, curTotal)));
+    return { t, vals: splitExact(t, base) };
+  };
+  const rowsHtml = () => {
+    const { vals } = planned();
+    return ids.map((id, i) => ({ c: catById(id), v: vals[i] })).filter(r => r.v > 0 || def[r.c.id] > 0)
+      .map(r => `<div class="bf" style="padding:9px 0" data-act="budget" data-id="${r.c.id}">
+        <div class="av" style="background:${hexA(r.c.color, .14)}">${r.c.e}</div>
+        <div class="grow"><div class="t1">${esc(r.c.name)}</div><div class="t2">${def[r.c.id] ? 'default ' + inr(def[r.c.id]) : 'no default yet'}</div></div>
+        <b class="num">${inr(r.v)}</b><span class="tiny muted" style="margin-left:6px">edit ›</span></div>`).join('');
+  };
+  const body = () => `<div class="banner"><span class="e">⚙️</span><div><b>Defaults for every month</b>
+      <div class="tiny muted" style="margin-top:2px">Any month you have not customised uses these numbers — including next month, so you only set them once. Months you already edited keep their own.</div></div></div>
+    <div class="field" style="margin-top:12px"><label>Total per month (₹)</label>
+      <input id="bdTotal" type="number" inputmode="numeric" value="${Math.round(curTotal)}"></div>
+    <div class="field"><label>Spread across categories</label>
+      <div class="chips" id="bdMode">
+        <span class="chip ${mode === 'keep' ? 'on' : ''}" data-m="keep">Keep my split</span>
+        <span class="chip ${mode === 'prop' ? 'on' : ''}" data-m="prop">By last month\u2019s spending</span>
+        <span class="chip ${mode === 'even' ? 'on' : ''}" data-m="even">Evenly</span>
+      </div></div>
+    <div class="tiny muted" id="bdSum"></div>
+    <div class="section-head" style="margin-top:14px"><h2>Categories</h2><span class="tiny muted" style="margin-left:auto">tap to set one exactly</span></div>
+    <div class="card pad" id="bdRows"></div>
+    <div class="opt-row" style="border:1px solid var(--border);border-radius:13px;margin-top:12px">
+      <div class="grow"><strong>Start from ${esc(monLabel(ym, 1))}</strong><span>Past months keep the numbers you actually used. Turn this off to rewrite every month.</span></div>
+      <label class="switch"><input type="checkbox" id="bdFrom" checked><span class="slider"></span></label></div>
+    <div class="tiny muted" style="margin-top:10px">Want the built-in example amounts back instead?
+      <button class="link" data-act="budgetdefaults">Restore the examples</button> — that clears your defaults and any month you customised.</div>
+    ${defTotal ? `<div class="tiny muted" style="margin-top:8px">Right now your defaults are ${inr(defTotal)}/month${Object.keys(def).length ? ' (' + Object.keys(def).slice(0, 4).map(id => esc(catById(id).name) + ' ' + inr(def[id])).join(' · ') + (Object.keys(def).length > 4 ? ' …' : '') + ')' : ''}.</div>` : ''}`;
+  openSheet({
+    title: 'Monthly budget defaults',
+    body: body(),
+    foot: `<button class="btn grow" data-x="c">Cancel</button><button class="btn primary grow" data-x="s">Save defaults</button>`,
+    onMount(b, f) {
+      const paint = () => {
+        const { t, vals } = planned();
+        const sum2 = vals.reduce((a, x) => a + x, 0);
+        $('#bdSum').innerHTML = t ? `Adds up to exactly <b>${inr(sum2)}</b> across ${vals.filter(v => v > 0).length} categories — every month.` : '';
+        $('#bdRows').innerHTML = rowsHtml();
+        $$('[data-act=budget]', b).forEach(el => el.onclick = () => { closeSheet(); setTimeout(() => budgetSheet(el.dataset.id), 80); });
+      };
+      $$('#bdMode .chip', b).forEach(c => c.onclick = () => {
+        mode = c.dataset.m; $$('#bdMode .chip', b).forEach(x => x.classList.toggle('on', x === c)); paint();
+      });
+      $('#bdTotal').oninput = paint;
+      paint();
+      $('[data-x=c]', f).onclick = () => backSheet();
+      $('[data-x=s]', f).onclick = () => {
+        const { t, vals } = planned(); if (!(t > 0)) return toast('Enter a monthly total first');
+        const fromNow = $('#bdFrom', b).checked;
+        const next = {};
+        ids.forEach((id, i) => { if (vals[i] > 0) next[id] = vals[i]; });
+        S.budgets['default'] = next;
+        S.budgets['defaultTotal'] = t;          /* the figure the categories should always add up to */
+        let cleared = 0;
+        for (const k of Object.keys(S.budgets)) {
+          if (k === 'default' || k === 'defaultTotal') continue;      /* settings, not a month */
+          if (!fromNow || k >= currentYM()) { delete S.budgets[k]; cleared++; }
+        }
+        save(true); closeSheet(); rerender();
+        toast('Defaults saved — ' + inr(t) + (fromNow ? ' from ' + monLabel(ym, 1) + ' onwards' : ' for every month') + (cleared ? ' · ' + cleared + ' custom ' + (cleared === 1 ? 'month' : 'months') + ' cleared' : ''), 3000);
+      };
+    }
+  });
+}
 function budgetSheet(catId) {
   const ym = curYM, c = catById(catId), cur = budgetFor(ym, catId);
   openSheet({
@@ -2553,8 +2675,24 @@ function budgetSheet(catId) {
         const v = Math.max(0, round2($('#bLim').value || 0)), asDefault = $('#bDef').checked;
         S.budgets[ym] = S.budgets[ym] || {};
         if (v) S.budgets[ym][catId] = v; else delete S.budgets[ym][catId];
-        if (asDefault) { S.budgets['default'] = S.budgets['default'] || {}; if (v) S.budgets['default'][catId] = v; else delete S.budgets['default'][catId]; }
-        save(); closeSheet(); toast(v ? `Budget ${inr(v)} set for ${c.name}` : 'Budget removed'); rerender();
+        let reNote = '';
+        if (asDefault) {
+          S.budgets['default'] = S.budgets['default'] || {};
+          if (v) S.budgets['default'][catId] = v; else delete S.budgets['default'][catId];
+          /* you said the month is ₹X with rent ₹Y — so the other categories share the rest */
+          const tot = +S.budgets['defaultTotal'] || 0;
+          if (tot > 0 && v > 0 && v < tot) {
+            const others = S.categories.filter(x => x.type === 'expense' && x.id !== catId).map(x => x.id);
+            const weights = others.map(id => S.budgets['default'][id] || 0);
+            const scaled = splitExact(tot - v, weights.map(w => w || 1));
+            others.forEach((id, i) => { if (scaled[i] > 0) S.budgets['default'][id] = scaled[i]; else delete S.budgets['default'][id]; });
+            reNote = ` · the other categories now share ${inr(tot - v)}`;
+          } else if (tot > 0 && v >= tot) {
+            reNote = ` · that is your whole ${inr(tot)} month or more — raise the monthly total in ⚙️ Every month`;
+          }
+          if (S.budgets[ym] && S.budgets[ym][catId] != null) delete S.budgets[ym][catId];   /* let the new default show */
+        }
+        save(); closeSheet(); toast(v ? `Default ${inr(v)} for ${c.name}${reNote}` : 'Budget removed', reNote ? 3200 : 1800); rerender();
       };
     }
   });
@@ -2574,15 +2712,26 @@ window.renderBudgets = function () {
   ${backBtnBar('Budgets', 'Envelope budgeting for your money')}
   ${monthNav(ym)}
   <div class="actionsrow" style="margin-top:8px">
-    <button class="btn primary grow" data-act="budgetwiz">📐 Set total budget</button>
-    <button class="btn soft grow" data-act="budgetdefaults">Restore defaults</button>
+    <button class="btn primary grow" data-act="budgetwiz">📐 This month</button>
+    <button class="btn soft grow" data-act="budgetdefs">⚙️ Every month</button>
   </div>
   ${bsrc === 'builtin' ? `<div class="banner warn" style="margin-top:10px"><span class="e">📐</span><div><b>You haven\u2019t set your own limits yet</b>
-    <div class="tiny muted">The amounts below are the built-in examples. Tap “Set total budget” for your own, or tap any category to edit just that one.</div></div></div>` : ''}
+    <div class="tiny muted">These are the built-in examples. Set this month with <b>📐 This month</b>, or make one budget for every month with <b>⚙️ Every month</b>.</div></div></div>`
+    : bsrc === 'default' ? `<div class="banner" style="margin-top:10px"><span class="e">⚙️</span><div><b>Every month · ${money(+S.budgets['defaultTotal'] || sum(budgetIdsFor(ym), id => budgetFor(ym, id)))}</b>
+      <div class="tiny muted" style="margin-top:2px">These are your monthly defaults${Object.keys(S.budgets['default'] || {}).length ? ' — ' + Object.keys(S.budgets['default']).slice(0, 5).map(id => esc(catById(id).name) + ' ' + inr(S.budgets['default'][id])).join(' · ') + (Object.keys(S.budgets['default']).length > 5 ? ' …' : '') : ''}.</div>
+      <div class="row" style="gap:8px;margin-top:9px;flex-wrap:wrap">
+        <button class="btn soft sm" data-act="budgetdefs">⚙️ Change defaults</button>
+        <button class="btn soft sm" data-act="budgetwiz">📐 Customise ${esc(monLabel(ym, 1))}</button></div></div></div>`
+    : `<div class="banner" style="margin-top:10px"><span class="e">📝</span><div><b>${esc(monLabel(ym, 1))} is customised</b>
+      <div class="tiny muted" style="margin-top:2px">Your every-month defaults are ${money(+S.budgets['defaultTotal'] || sum(Object.keys(S.budgets['default'] || {}), id => S.budgets['default'][id]) || sum(budgetIdsFor(ym), id => budgetFor(ym, id)))}.</div>
+      <div class="row" style="gap:8px;margin-top:9px;flex-wrap:wrap">
+        <button class="btn soft sm" data-act="budgetusemonthdefaults">↩︎ Use the defaults this month</button>
+        <button class="btn soft sm" data-act="budgetdefs">⚙️ Edit defaults</button></div></div></div>`}
   <div class="card pad" style="margin-top:8px">
     <div class="between"><div><div class="tiny muted" style="font-weight:700">SPENT</div><div style="font-size:22px;font-weight:800">${money(totalSp)}</div></div>
       <div class="right"><div class="tiny muted" style="font-weight:700">BUDGETED</div><div style="font-size:22px;font-weight:800">${money(totalLim)}</div></div></div>
     <div class="progress" style="height:10px;margin-top:11px"><i style="width:${clamp(pct(totalSp, totalLim), 0, 100)}%;background:${progressColor(pct(totalSp, totalLim))}"></i></div>
+    ${passNoteHtml(ym)}
     <div class="grid3" style="margin-top:12px">
       <div><div class="tiny muted" style="font-weight:700">SAFE TO SPEND</div><b class="${safeToSpend > 0 ? 'pos' : 'neg'}">${money(safeToSpend)}</b></div>
       <div><div class="tiny muted" style="font-weight:700">DAILY ALLOWANCE</div><b>${money(dailyAllow)}</b></div>
@@ -3251,9 +3400,12 @@ function passLedgerSheet(who) {
     }
     return head + `<div class="between" style="padding:10px 14px;border-bottom:1px solid var(--border)">
         <div><div style="font-weight:600">${esc(r.t.note || catById(r.t.cat).name || (r.t.type === 'transfer' ? 'Transfer' : r.t.type))}</div>
-          <div class="tiny muted">${esc(dayLabel(r.t.date))} · ${r.t.type === 'income' ? 'received' : r.t.type === 'expense' ? 'paid for them' : 'moved between accounts'}${r.open ? '' : ' · settled'}</div></div>
+          <div class="tiny muted">${esc(dayLabel(r.t.date))} · ${r.t.type === 'income' ? 'received' : r.t.type === 'expense' ? 'paid for them' : 'moved between accounts'}${r.open ? '' : ' · <b>settled</b>'}</div></div>
         <div class="right"><b class="${r.delta < 0 ? 'neg' : 'pos'}">${r.delta > 0 ? '+' : r.delta < 0 ? '−' : ''}${money(Math.abs(r.delta))}</b>
-          <div class="tiny muted">balance ${(r.run < 0 ? '−' : '') + money(Math.abs(r.run))}</div></div></div>`;
+          <div class="tiny muted">balance ${(r.run < 0 ? '−' : '') + money(Math.abs(r.run))}</div>
+          <div class="tiny" style="margin-top:3px">${r.open
+            ? `<b style="color:var(--accent)" data-act="passsettlerow" data-id="${r.t.id}" data-who="${esc(who)}">Settle this payment</b>`
+            : `<b style="color:var(--accent)" data-act="passunsettlerow" data-id="${r.t.id}" data-who="${esc(who)}">↩︎ Reopen</b>`}</div></div></div>`;
   }).join('') : '';
   openSheet({
     title: 'Pass-through · ' + who,
@@ -3277,7 +3429,8 @@ function passLedgerSheet(who) {
         <div class="tiny muted" style="margin-top:8px">A negative net means you paid out of your own pocket. Still never your income or expense.</div>
       </div></div>
     <div class="section"><div class="section-head"><h2>Running balance</h2>
-      ${stat.open ? `<button class="link" data-act="passsettlewho" data-id="${esc(who)}">Settle open</button>` : ''}</div>
+      ${stat.open ? `<button class="link" data-act="passsettlewho" data-id="${esc(who)}">Settle open (${stat.open})</button>`
+        : stat.settled ? `<button class="link" data-act="passunsettlewho" data-id="${esc(who)}">↩︎ Reopen all (${stat.settled})</button>` : ''}</div>
       <div class="card">${rowsHtml || '<div class="pad muted sm">Nothing recorded for this person yet.</div>'}</div></div>
     <div class="section"><div class="card pad"><div class="row" style="gap:8px">
       <button class="btn soft sm grow" data-act="passrename" data-id="${esc(who)}">✏️ Rename</button>
@@ -3295,7 +3448,8 @@ window.renderPass = function () {
   const got = sum(S.transactions.filter(t => t.pass && t.type === 'income'), t => t.amount);
   const paid = sum(S.transactions.filter(t => t.pass && t.type === 'expense'), t => t.amount);
   const mGot = sum(rows, r => r.mGot || 0), mPaid = sum(rows, r => r.mPaid || 0);
-  const openN = S.transactions.filter(t => t.pass === 1).length;
+  const openN = passList().filter(t => passShares(t).some(sh => !sh.settled)).length;
+  const settledN = passList().filter(t => t.pass === 2 || passShares(t).every(sh => sh.settled)).length;
   const recent = passList().slice().sort(sortTxDesc).slice(0, 40);
   const peopleRows = uniq([...rows.map(r => r.who), ...registered]);
   $('#s-pass').innerHTML = `
@@ -3312,7 +3466,8 @@ window.renderPass = function () {
     <div class="tiny muted">These entries still move your real account balances, but they are skipped in income, expenses, budgets, savings rate and analytics.</div>
     <div class="row" style="gap:8px;margin-top:12px">
       <button class="btn soft sm grow" data-act="passaddperson">＋ Add a person</button>
-      ${openN ? `<button class="btn soft sm grow" data-act="passsettleall">✅ Settle all (${openN})</button>` : ''}</div>
+      ${openN ? `<button class="btn soft sm grow" data-act="passsettleall">✅ Settle all (${openN})</button>`
+        : settledN ? `<button class="btn soft sm grow" data-act="passunsettleall">↩︎ Reopen all (${settledN})</button>` : ''}</div>
   </div>
   <div class="section"><div class="section-head"><h2>People (${peopleRows.length})</h2></div>
     ${peopleRows.length ? peopleRows.map(who => {
@@ -3339,7 +3494,8 @@ window.renderPass = function () {
           <div class="between" style="margin-top:8px">
             <span class="tiny muted">${r.open ? r.open + (r.open === 1 ? ' share' : ' shares') + ' still open' : 'all settled'}</span>
             <span class="row" style="gap:8px">
-            ${r.open ? `<span class="tiny" style="font-weight:650;color:var(--accent)" data-act="passsettlewho" data-id="${esc(who)}">Settle ${r.open}</span>` : ''}
+            ${r.open ? `<span class="tiny" style="font-weight:650;color:var(--accent)" data-act="passsettlewho" data-id="${esc(who)}">Settle ${r.open}</span>`
+              : `<span class="tiny" style="font-weight:650;color:var(--accent)" data-act="passunsettlewho" data-id="${esc(who)}">↩︎ Reopen ${r.settled}</span>`}
             <span class="tiny" style="color:var(--accent)">Ledger ›</span></span></div>` : ''}
       </div>`;
     }).join('') : `<div class="card pad muted sm">Add the people whose money you move — father, mother, a friend — and RupeeFlow keeps a separate block for each one.</div>`}
@@ -4667,14 +4823,54 @@ document.addEventListener('click', (ev) => {
     case 'passsettlewho': {
       let n = 0;
       for (const t of S.transactions) if (t.pass && passShareOpen(t, id)) { passSettleShare(t, id); n++; }
-      save(); rerender();
+      refreshLedgerSheet(id);
       return toast(n + (n === 1 ? ' entry' : ' entries') + ' settled for ' + id);
     }
     case 'passsettle': {
       const t = S.transactions.find(x => x.id === id); if (!t) return;
-      passSettleShare(t, null); save(); closeSheet(); rerender();
-      return toast('Marked settled — still excluded from your money');
+      passSettleShare(t, null); save(true); closeSheet(); rerender();
+      setTimeout(() => txDetail(id), 90);            /* show the flipped button, not a closed sheet */
+      return toast('Settled — tap reopen if you did it by mistake');
     }
+    case 'passsettlerow': {
+      const t = S.transactions.find(x => x.id === id); if (!t) return;
+      const w = String(act.dataset.who || '');
+      passSettleShare(t, w);
+      refreshLedgerSheet(w);
+      return toast('Settled ' + (w.includes(' ') ? w : w + '’s part of') + ' ' + inr(t.amount));
+    }
+    case 'passunsettlerow': {
+      const t = S.transactions.find(x => x.id === id); if (!t) return;
+      const w = String(act.dataset.who || '');
+      passUnsettleShare(t, w);
+      refreshLedgerSheet(w);
+      return toast('Reopened ' + inr(t.amount) + ' — counted as outstanding again');
+    }
+    case 'passsettlewho1': case 'passunsettlewho1': {
+      const t = S.transactions.find(x => x.id === id); if (!t) return;
+      const w = String(act.dataset.who || '');
+      if (act.dataset.act === 'passsettlewho1') passSettleShare(t, w); else passUnsettleShare(t, w);
+      save(true); closeSheet(); rerender();
+      setTimeout(() => txDetail(id), 90);
+      return;
+    }
+    case 'passunsettle': {
+      const t = S.transactions.find(x => x.id === id); if (!t) return;
+      passUnsettleShare(t, null); save(true); closeSheet(); rerender();
+      setTimeout(() => txDetail(id), 90);
+      return toast('Reopened — counted as outstanding again');
+    }
+    case 'passunsettlewho': {
+      let n = 0;
+      for (const t of S.transactions) if (t.pass && passShares(t).some(sh => sh.who === id && sh.settled)) { passUnsettleShare(t, id); n++; }
+      refreshLedgerSheet(id);
+      return toast(n ? `Reopened ${n} payment${n === 1 ? '' : 's'} for ${id}` : 'Nothing settled for ' + id);
+    }
+    case 'passunsettleall': return confirmSheet('Reopen every settled pass-through entry?',
+      'They will count as outstanding again — useful if you settled something by mistake. No money moves.', 'Reopen all', () => {
+        let n = 0; for (const t of passList()) { if (t.pass === 2 || passShares(t).every(sh => sh.settled)) { passUnsettleShare(t, null); n++; } }
+        save(true); closeSheet(); rerender(); toast(n ? `Reopened ${n} entr${n === 1 ? 'y' : 'ies'}` : 'Nothing was settled');
+      });
     case 'passsettleall': return confirmSheet('Settle all pass-through entries?',
       'Every open pass-through entry is marked settled. The money stays out of your income and expenses; the “holding” figure drops to zero.',
       'Settle all', () => {
@@ -4682,6 +4878,11 @@ document.addEventListener('click', (ev) => {
         save(); closeSheet(); rerender(); toast(n + (n === 1 ? ' entry' : ' entries') + ' settled');
       });
     case 'budgetwiz': return budgetWizard();
+    case 'budgetdefs': return budgetDefaultsSheet();
+    case 'budgetusemonthdefaults': {
+      delete S.budgets[curYM]; save(true); rerender();
+      return toast(Object.keys(S.budgets['default'] || {}).length ? 'This month now follows your defaults' : 'This month is back to the built-in examples');
+    }
     case 'budgetdefaults': return confirmSheet('Restore example budgets?',
       'This replaces your per-category limits for <b>' + esc(monLabel(curYM, 1)) + '</b> with the built-in example amounts, and clears your saved defaults.',
       'Restore', () => { delete S.budgets[curYM]; delete S.budgets['default']; save(true); rerender(); toast('Example budgets restored'); });

@@ -3,6 +3,60 @@
 All notable changes to RupeeFlow. The build stamp shown in **Settings → About** matches the entries here,
 so you can confirm at a glance which version your phone is running.
 
+## 1.4.8 — 2026-09-19  ·  build `1.4.8+2026-09-19.4`
+
+Four things you asked about, including one real bug.
+
+**What "settle" means, and how to undo it**
+Settling a pass-through payment is bookkeeping only: it says *"this one is squared up"*. It never moves
+money, never becomes your income — and a settled payment simply stops counting toward the "holding" or
+"out of pocket" balance. It was one-way before; now every level has both directions:
+- **Per payment**: in a person's ledger each row carries **Settle this payment**, and once settled the
+  same row reads **↩︎ Reopen**.
+- **Per person**: **Settle 3** on their block (or **Settle open (2)** in their ledger) closes every open
+  payment for them; once nothing is open it becomes **↩︎ Reopen all**.
+- **Whole entry**: the transaction detail sheet shows *"✅ This is settled"* or *"↩︎ Reopen — not settled
+  after all"*, and for a split entry each person's share has its own settle/reopen link right there.
+- **Everything**: the pass-through screen's **Settle all** becomes **Reopen all** when there is nothing
+  open. Reopening asks for confirmation, since it changes the balance you are looking at.
+
+**Default budget for every month — set once, applies everywhere**
+**Budgets → ⚙️ Every month** (or *Change defaults* from the budget card) is the new place for the numbers
+that should apply to all months: type the monthly total — say **₹15,000** — pick *keep my split*, *by last
+month's spending* or *evenly*, and it is stored as your **default**. Any month you have not customised
+uses it, **including next month**, so you never re-enter it.
+- Editing one category inside a default month re-splits the rest: **rent ₹12,000 inside a ₹15,000 month**
+  leaves ₹3,000 for everything else, and the toast says so. The screen banner then reads
+  *"Every month · ₹15,000 — Rent ₹12,000 · Groceries ₹350 …"*.
+- **Increasing it later starts from the current month**: the *Start from <month>* switch (on by default)
+  clears custom values from this month forward and keeps the months you already lived exactly as you used
+  them. Turning it off rewrites every month.
+- A single month can still be customised on top (*📐 This month*), and its banner offers
+  **↩︎ Use the defaults this month** to return to the default numbers.
+
+**"Expense 17k but total spent 27k" — yes, and it was a bug**
+The home card's *Budget health → TOTAL SPENT* was the only figure in the app still counting pass-through
+money, so it disagreed with the Expenses KPI. It now excludes pass-through (and so do the insights —
+budgets exceeded, weekend/weekday split — and the Analytics daily burn, cumulative chart, last-month
+comparison, top notes and budget-adherence bars, which could all be inflated by money that was never
+yours). Nothing about where pass-through shows up changed: it still moves account balances and still has
+its own screen. To make the arithmetic obvious the app now says it in words on the screens where the two
+numbers sit together, e.g. *"🤝 ₹27,000 pass-through this month — someone else's money, left out of the
+figures above"* and, when a category is not budgeted, *"Counted here: the categories you budget. ₹9,301 of
+spending sits outside them."*
+
+**Budget colours: red means over**
+`progressColor` was confusing on two counts — it painted anything under 85% in the accent colour and
+treated *exactly* at the limit as over. Now: **over the limit is red**, *exactly the limit* is amber and
+labelled **at limit**, 90%+ is amber **almost**, 60%+ is **on track** and below that **healthy** (green).
+So "not over budget" never shows red, and "spent the whole envelope" is not called a failure.
+
+Tests: `tests/options.js` 174 → **202** (group **K**: settle one payment leaves the others open, reopen
+restores the balance, per-person settle/reopen, the entry-level toggle both ways, defaults for every month
+incl. next month, a past month staying untouched, rent ₹12,000 inside ₹15,000, raising the total from the
+current month, restoring a customised month, the colour rules, and a ₹10,000 pass-through expense moving
+neither the expense total nor budget spend). Totals now **455 checks** across ten suites.
+
 ## 1.4.7 — 2026-09-19  ·  build `1.4.7+2026-09-19.3`
 
 Two things: trips are now first-class, and the whole test suite runs in GitHub Actions on every push.
