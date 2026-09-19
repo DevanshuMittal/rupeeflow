@@ -23,7 +23,7 @@ and prints a copyable diagnostic report.
 | **Works offline** | Yes — everything is cached on the phone (PWA installable) |
 | **Backend** | Google Sheets + Drive, called directly from the browser (no server, no fees) |
 | **Currency / FY** | ₹ with Indian digit grouping (₹1,45,000 / ₹1.45L / ₹1.2Cr), April–March |
-| **Tested** | 353 automated tests passing (48 app + 59 customisation + 117 options + 33 profiles/decoy + 31 sheet setup + 23 desktop layout + 19 two-device sync + 13 setup checker + 10 update pipeline) + a 17-assertion CI gate |
+| **Tested** | 374 automated tests passing (48 app + 59 customisation + 138 options + 33 profiles/decoy + 31 sheet setup + 23 desktop layout + 19 two-device sync + 13 setup checker + 10 update pipeline) + a 17-assertion CI gate |
 
 ---
 
@@ -59,6 +59,8 @@ and prints a copyable diagnostic report.
 | `37-home-visible.png`, `38-home-hidden.png` | Hide-balances on/off — nothing leaks either way |
 | `39-passthrough-people.png`, `40-passthrough-ledger.png` | Father and Mother side by side, running balance, out-of-pocket |
 | `41-add-split-pass.png`, `42-signin-once.png` | Splitting one payment between two people · sign in once |
+| `43-passthrough-month-summary.png`, `44-ledger-month-summary.png` | Each person's this-month vs overall figures, and the month divider in their running balance |
+| `45-budget-exact.png` | The budget editor showing "Adds up to exactly ₹15,000 across 23 categories" |
 | `15-customise-layout.png` … `21-customise-dev.png` | Layout, fields, templates, rules, format, theme, dev panel |
 | `22-rule-editor.png`, `23-rule-json.png` | Rule builder + JSON editor |
 | `24-add-sheet-custom.png` | Add sheet with templates + custom fields |
@@ -254,6 +256,11 @@ Install RupeeFlow on the new phone → **More → Drive Sync** → paste the sam
   **ledger** shows every entry with a **running balance**, so −₹6,600 → +₹6,000 → −₹600 is obvious
 * Settle **per person** ("Settle 3" on their block) or everything at once; settling is state, never an
   income entry
+* **Every person carries their own summary — this month beside overall.** Their block shows what you
+  spent for them and received from them *this month* (entries, still open) next to the same figures
+  for all time; opening them gives a **Summary** table with month and all-time columns, net included,
+  and a **THIS MONTH** divider inside the running balance so this month's money is never mixed with
+  last month's
 * **More → Pass-through** holds the per-person blocks, rename, add person, and a one-tap
   **+ Entry for <person>**. Records tags them ("🤝 Papa + Mother") with a filter chip, and the CSV
   export plus the Drive sheet write every person with their share
@@ -270,6 +277,15 @@ Install RupeeFlow on the new phone → **More → Drive Sync** → paste the sam
   you never tap "sign in" twice
 
 ### Clear, reset & start again
+### Budgets that add up
+* **Set up your budget** takes one total and spreads it three ways — *by last month's spending*,
+  *evenly*, or *keeping your current split* — and the categories **always add up to the figure you
+  typed**: ₹15,000 saved as 23 × ₹652, never ₹14,950. Whole totals stay in tidy ₹10 steps, and a total
+  that can't be split evenly stays exact rupee-for-rupee. The editor shows the exact sum before you
+  apply it
+* Set a single category on its own from the budgets screen, and tick *Apply to future months* to save
+  it as your default
+
 **Settings → Data & backup** gives you one sheet where you tick exactly what goes — transactions,
 pass-through entries only, reimbursement claims, account opening balances, budget limits, bills,
 goals, loans — with a live summary and a cancel that really changes nothing.
@@ -359,7 +375,7 @@ finance-tracker/
 └─ tests/
    ├─ qa.js              ← 48 end-to-end interaction tests (Playwright)
    ├─ custom.js          ← 59 tests for fields / rules / templates / layout / theme / API
-   ├─ options.js         ← 117 tests for hidden balances, budgets, clear/reset, pass-through (many people), sign-in-once
+   ├─ options.js         ← 138 tests for hidden balances, exact budgets, clear/reset, pass-through (many people), sign-in-once
    ├─ setupcheck.js      ← 13 tests for the setup checker itself
    ├─ update.js          ← 10 tests proving the in-app update flow works
    ├─ ci-check.js        ← 17-assertion integrity gate used by GitHub Actions
@@ -377,7 +393,7 @@ node tests/custom.js      # customisation layer          (59 tests)
 node tests/setupcheck.js  # setup checker behaviour      (13 tests)
 node tests/update.js      # in-app update pipeline       (10 tests — see GITHUB.md §10)
 node tests/twodevice.js   # phone + laptop sync          (19 tests, mocked Google — no credentials)
-node tests/options.js     # hide/budget/clear/pass-through/sign-in (117 tests)
+node tests/options.js     # hide/budget/clear/pass-through/sign-in (138 tests)
 node tests/profiles.js    # profiles, PIN gate, decoy    (33 tests — proves real data never leaks)
 node tests/desktop.js     # laptop layout, phone intact  (23 tests)
 node tests/sheetsetup.js  # Sheet creation + API errors (31 tests, mocked Google)

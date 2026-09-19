@@ -500,7 +500,7 @@ textarea{min-height:64px;resize:vertical}
 
 /* Bump this on every release — tools/bump.js updates it here and in sw.js.
    The running build is compared against the deployed one to offer in-app updates. */
-const APP_BUILD = '1.4.4+2026-09-16.2';
+const APP_BUILD = '1.4.5+2026-09-19.1';
 
 /* ---------------------------------- 1. utils ------------------------------- */
 const $  = (s, r = document) => r.querySelector(s);
@@ -1149,24 +1149,32 @@ function addPassPerson(name) {
    out of pocket for them, not that they owe you nothing. Neither side is your income/expense. */
 function passStats(list) {
   const by = {};
-  const touch = w => by[w] || (by[w] = { who: w, got: 0, paid: 0, open: 0, settled: 0, count: 0, first: null, last: null });
+  const ym = curYM;
+  /* per person: everything (got/paid) plus the same numbers for the month on screen
+     (mGot/mPaid), so a block can say "spent 12,000 this month, 45,000 overall". */
+  const touch = w => by[w] || (by[w] = { who: w, got: 0, paid: 0, open: 0, settled: 0, count: 0, first: null, last: null,
+                                        mGot: 0, mPaid: 0, mOpen: 0, mSettled: 0, mCount: 0, mOpenNet: 0 });
   for (const t of (list || S.transactions)) {
     if (!t.pass) continue;
+    const inMonth = String(t.date || '').slice(0, 7) === ym;
     for (const sh of passShares(t)) {
       const r = touch(sh.who);
+      const signed = t.type === 'income' ? sh.amt : t.type === 'expense' ? -sh.amt : 0;
       if (t.type === 'income') r.got += sh.amt; else if (t.type === 'expense') r.paid += sh.amt;
       r.count++;
-      if (sh.settled) r.settled++;
+      if (inMonth) { r.mCount++; if (t.type === 'income') r.mGot += sh.amt; else if (t.type === 'expense') r.mPaid += sh.amt; }
+      if (sh.settled) { r.settled++; if (inMonth) r.mSettled++; }
       else {
         r.open++;
         /* only unsettled shares describe money you are holding right now */
-        r.openNet = (r.openNet || 0) + (t.type === 'income' ? sh.amt : t.type === 'expense' ? -sh.amt : 0);
+        r.openNet = (r.openNet || 0) + signed;
+        if (inMonth) { r.mOpen++; r.mOpenNet += signed; }
       }
       if (!r.first || t.date < r.first) r.first = t.date;
       if (!r.last || t.date > r.last) r.last = t.date;
     }
   }
-  return Object.values(by).map(r => ({ ...r, held: r.got - r.paid, openHeld: r.openNet || 0 }))
+  return Object.values(by).map(r => ({ ...r, held: r.got - r.paid, openHeld: r.openNet || 0, mHeld: r.mGot - r.mPaid }))
     .sort((a, b) => b.openHeld - a.openHeld || b.held - a.held);
 }
 /* chronological ledger with a running balance — this is what makes "expense first, income later"
@@ -2384,6 +2392,25 @@ function budgetIdsFor(ym) {
   const ids = Object.keys(S.budgets[ym] || {}).length ? Object.keys(S.budgets[ym]) : Object.keys(DEFAULT_BUDGETS);
   return uniq(ids.concat(Object.keys(S.budgets['default'] || {})));
 }
+/* Hand out a total across weights so the pieces add up to the total *exactly*.
+   Rounding every category on its own used to lose the remainders — ₹15,000 spread over 13
+   categories came out as ₹14,950. Here the leftover is dealt out, penny by penny, to whoever
+   was cut the most. Whole totals keep their tidy ₹10 steps (a ₹14,950 total falls back to ₹5). */
+function splitExact(total, weights) {
+  const n = (weights || []).length;
+  const t = Math.max(0, Math.round(+total || 0));
+  if (!n || !t) return (weights || []).map(() => 0);
+  const step = t % 10 === 0 ? 10 : t % 5 === 0 ? 5 : 1;
+  const units = Math.round(t / step);
+  const ws = weights.map(w => Math.max(0, +w || 0));
+  const sumW = ws.reduce((a, x) => a + x, 0);
+  const raw = ws.map(w => units * (sumW > 0 ? w / sumW : 1 / n));
+  const out = raw.map(x => Math.floor(x));
+  let left = units - out.reduce((a, x) => a + x, 0);
+  const order = raw.map((x, i) => ({ i, frac: x - Math.floor(x) })).sort((a, b) => b.frac - a.frac || a.i - b.i);
+  for (let k = 0; left > 0; k++, left--) out[order[k % n].i] += 1;
+  return out.map(u => u * step);
+}
 /* Total + distribution wizard. Answers "where do I edit ₹93,200?". */
 function budgetWizard() {
   const ym = curYM;
@@ -2410,19 +2437,20 @@ function budgetWizard() {
     foot: `<button class="btn soft grow" data-x="c">Cancel</button><button class="btn primary grow" data-bw-apply="1">Apply budget</button>`,
     onMount(b, f) {
       const total = () => Math.max(0, +($('#bwTotal').value || 0));
+      const modeNow = () => { const c = $('#bwMode .chip.on'); return c && c.dataset ? c.dataset.m : 'prop'; };
+      /* the weights each mode implies; splitExact turns them into rupees that add up */
+      const weightsFor = mode => ids.map(id => mode === 'even' ? 1
+        : mode === 'prop' ? spendOf(id)
+        : (budgetFor(ym, id) / Math.max(1, curTotal)));
+      const plan = () => { const t = total(), mode = modeNow(); return { t, mode, vals: splitExact(t, weightsFor(mode)) }; };
       const preview = () => {
-        const t = total(), mode = ($('#bwMode .chip.on') || {}).dataset ? $('#bwMode .chip.on').dataset.m : 'prop';
-        const base = ids.map(id => spendOf(id));
-        const sumBase = base.reduce((a, x) => a + x, 0);
-        const out = [];
-        ids.forEach((id, i) => {
-          const share = mode === 'even' ? 1 / ids.length
-            : mode === 'prop' ? (sumBase > 0 ? base[i] / sumBase : 1 / ids.length)
-            : (budgetFor(ym, id) / Math.max(1, curTotal));
-          const v = Math.round(t * share / 10) * 10;
-          if (v > 0) out.push(catById(id).name + ' ' + inr(v));
-        });
-        $('#bwPreview').innerHTML = t ? 'Roughly: ' + out.slice(0, 5).map(esc).join(' · ') + (out.length > 5 ? ' …' : '') : '';
+        const { t, vals } = plan();
+        const sums = vals.reduce((a, x) => a + x, 0);
+        const rows = ids.map((id, i) => vals[i] > 0 ? esc(catById(id).name) + ' ' + inr(vals[i]) : null).filter(Boolean);
+        $('#bwPreview').innerHTML = t
+          ? `<div class="tiny" style="margin-top:6px">Adds up to exactly <b>${inr(sums)}</b> across ${rows.length} categories${sums === Math.round(t) ? '' : ` — <span class="neg">wanted ${inr(Math.round(t))}</span>`}</div>
+             <div class="tiny muted" style="margin-top:4px;max-height:124px;overflow:auto">${rows.join(' · ')}</div>`
+          : '';
       };
       $$('#bwMode .chip', b).forEach(c => c.onclick = () => { $$('#bwMode .chip', b).forEach(x => x.classList.remove('on')); c.classList.add('on'); preview(); });
       $('#bwTotal').oninput = preview; preview();
@@ -2430,19 +2458,12 @@ function budgetWizard() {
       $('[data-x=c]', f).onclick = () => backSheet();
       $('[data-bw-apply]', f).onclick = () => {
         const t = total(); if (!(t > 0)) return toast('Enter a monthly budget first');
-        const mode = ($('#bwMode .chip.on') || {}).dataset ? $('#bwMode .chip.on').dataset.m : 'prop';
-        const base = ids.map(id => spendOf(id));
-        const sumBase = base.reduce((a, x) => a + x, 0);
+        const vals = plan().vals;
         S.budgets[ym] = S.budgets[ym] || {};
-        ids.forEach((id, i) => {
-          const share = mode === 'even' ? 1 / ids.length
-            : mode === 'prop' ? (sumBase > 0 ? base[i] / sumBase : 1 / ids.length)
-            : (budgetFor(ym, id) / Math.max(1, curTotal));
-          const v = Math.round(t * share / 10) * 10;
-          if (v > 0) S.budgets[ym][id] = v; else delete S.budgets[ym][id];
-        });
+        ids.forEach((id, i) => { if (vals[i] > 0) S.budgets[ym][id] = vals[i]; else delete S.budgets[ym][id]; });
+        const stored = sum(Object.keys(S.budgets[ym]), id => S.budgets[ym][id]);
         save(true); closeSheet(); rerender();
-        toast('Budget set — ' + inr(sum(Object.keys(S.budgets[ym]), id => S.budgets[ym][id])) + ' across ' + Object.keys(S.budgets[ym]).length + ' categories', 2600);
+        toast('Budget set — ' + inr(stored) + ' across ' + Object.keys(S.budgets[ym]).length + ' categories', 2600);
       };
     }
   });
@@ -3150,26 +3171,48 @@ function setupWizard(opts) {
 /* One person's block: received, paid, what is left, and the running balance row by row. */
 function passLedgerSheet(who) {
   const rows = passLedger(who);
-  const stat = (passStats().find(r => r.who === who)) || { who, got: 0, paid: 0, held: 0, openHeld: 0, count: 0 };
+  const stat = (passStats().find(r => r.who === who)) || { who, got: 0, paid: 0, held: 0, openHeld: 0, count: 0, mGot: 0, mPaid: 0, mHeld: 0, mCount: 0 };
   const held = stat.openHeld || 0;
-  openSheet({
-    title: 'Pass-through · ' + who,
-    body: `<div class="card pad">
-      <div class="between"><div><div class="tiny muted" style="font-weight:700">${held < 0 ? 'YOU ARE OUT OF POCKET' : 'YOU ARE HOLDING'}</div>
-        <div style="font-size:24px;font-weight:800">${money(Math.abs(held))}</div>
-        <div class="tiny muted" style="margin-top:2px">${held < 0 ? 'you paid this much of their money before it arrived' : held > 0 ? 'of their money is still with you' : 'nothing outstanding'}</div></div>
-        <div class="right tiny muted">received<br><b>${money(stat.got)}</b><br>spent for them<br><b>${money(stat.paid)}</b></div></div>
-      <div class="sep"></div>
-      <div class="tiny muted">None of it counts as your income or expense.</div>
-    </div>
-    <div class="section"><div class="section-head"><h2>Running balance</h2>
-      ${stat.open ? `<button class="link" data-act="passsettlewho" data-id="${esc(who)}">Settle open</button>` : ''}</div>
-      <div class="card">${rows.length ? rows.map(r => `<div class="between" style="padding:10px 14px;border-bottom:1px solid var(--border)">
+  /* rows run oldest → newest; mark where this month starts so "this month" is visible in the list */
+  let markedMonth = false;
+  const mixedMonths = rows.some(r => String(r.t.date || '').slice(0, 7) !== curYM);
+  const rowsHtml = rows.length ? rows.map(r => {
+    const inMonth = String(r.t.date || '').slice(0, 7) === curYM;
+    let head = '';
+    if (inMonth && mixedMonths && !markedMonth) {
+      markedMonth = true;
+      head = `<div class="tiny muted" style="padding:6px 14px;background:var(--surface2);font-weight:700;letter-spacing:.04em">THIS MONTH</div>`;
+    }
+    return head + `<div class="between" style="padding:10px 14px;border-bottom:1px solid var(--border)">
         <div><div style="font-weight:600">${esc(r.t.note || catById(r.t.cat).name || (r.t.type === 'transfer' ? 'Transfer' : r.t.type))}</div>
           <div class="tiny muted">${esc(dayLabel(r.t.date))} · ${r.t.type === 'income' ? 'received' : r.t.type === 'expense' ? 'paid for them' : 'moved between accounts'}${r.open ? '' : ' · settled'}</div></div>
         <div class="right"><b class="${r.delta < 0 ? 'neg' : 'pos'}">${r.delta > 0 ? '+' : r.delta < 0 ? '−' : ''}${money(Math.abs(r.delta))}</b>
-          <div class="tiny muted">balance ${(r.run < 0 ? '−' : '') + money(Math.abs(r.run))}</div></div></div>`).join('')
-        : '<div class="pad muted sm">Nothing recorded for this person yet.</div>'}</div></div>
+          <div class="tiny muted">balance ${(r.run < 0 ? '−' : '') + money(Math.abs(r.run))}</div></div></div>`;
+  }).join('') : '';
+  openSheet({
+    title: 'Pass-through · ' + who,
+    body: `<div class="card pad">
+      <div><div class="tiny muted" style="font-weight:700">${held < 0 ? 'YOU ARE OUT OF POCKET' : 'YOU ARE HOLDING'}</div>
+        <div style="font-size:24px;font-weight:800">${money(Math.abs(held))}</div>
+        <div class="tiny muted" style="margin-top:2px">${held < 0 ? 'you paid this much of their money before it arrived' : held > 0 ? 'of their money is still with you' : 'nothing outstanding'}</div></div>
+      <div class="sep"></div>
+      <div class="tiny muted">None of it counts as your income or expense.</div>
+    </div>
+    <div class="section"><div class="section-head"><h2>Summary</h2><span class="tiny muted" style="margin-left:auto">${esc(monLabel(curYM, 1))} · all time</span></div>
+      <div class="card pad">
+        <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:7px 6px;font-size:12.5px;align-items:baseline">
+          <div></div><div class="right tiny muted" style="font-weight:700">THIS MONTH</div><div class="right tiny muted" style="font-weight:700">OVERALL</div>
+          <div>Spent for them</div><div class="right"><b>${money(stat.mPaid || 0)}</b></div><div class="right"><b>${money(stat.paid)}</b></div>
+          <div>Received from them</div><div class="right"><b class="pos">${money(stat.mGot || 0)}</b></div><div class="right"><b class="pos">${money(stat.got)}</b></div>
+          <div>Net (received − spent)</div><div class="right"><b class="${(stat.mHeld || 0) < 0 ? 'neg' : 'pos'}">${((stat.mHeld || 0) < 0 ? '−' : '+') + money(Math.abs(stat.mHeld || 0))}</b></div>
+            <div class="right"><b class="${stat.held < 0 ? 'neg' : 'pos'}">${(stat.held < 0 ? '−' : '+') + money(Math.abs(stat.held))}</b></div>
+          <div>Entries</div><div class="right">${stat.mCount || 0}</div><div class="right">${stat.count}</div>
+        </div>
+        <div class="tiny muted" style="margin-top:8px">A negative net means you paid out of your own pocket. Still never your income or expense.</div>
+      </div></div>
+    <div class="section"><div class="section-head"><h2>Running balance</h2>
+      ${stat.open ? `<button class="link" data-act="passsettlewho" data-id="${esc(who)}">Settle open</button>` : ''}</div>
+      <div class="card">${rowsHtml || '<div class="pad muted sm">Nothing recorded for this person yet.</div>'}</div></div>
     <div class="section"><div class="card pad"><div class="row" style="gap:8px">
       <button class="btn soft sm grow" data-act="passrename" data-id="${esc(who)}">✏️ Rename</button>
       <button class="btn soft sm grow" data-act="passaddtx" data-id="${esc(who)}">＋ Entry for ${esc(who)}</button></div></div></div>`,
@@ -3185,6 +3228,7 @@ window.renderPass = function () {
   const held = passHeld();
   const got = sum(S.transactions.filter(t => t.pass && t.type === 'income'), t => t.amount);
   const paid = sum(S.transactions.filter(t => t.pass && t.type === 'expense'), t => t.amount);
+  const mGot = sum(rows, r => r.mGot || 0), mPaid = sum(rows, r => r.mPaid || 0);
   const openN = S.transactions.filter(t => t.pass === 1).length;
   const recent = passList().slice().sort(sortTxDesc).slice(0, 40);
   const peopleRows = uniq([...rows.map(r => r.who), ...registered]);
@@ -3194,9 +3238,10 @@ window.renderPass = function () {
     <div class="tiny muted" style="font-weight:700">${held < 0 ? 'YOU ARE OUT OF POCKET FOR OTHERS' : 'YOU ARE HOLDING FOR OTHERS'}</div>
     <div style="font-size:26px;font-weight:800">${money(Math.abs(held))}</div>
     <div class="tiny muted" style="margin-top:2px">${held < 0 ? 'you paid out of your own pocket before their money arrived — still not your expense' : held > 0 ? 'their money sitting in your accounts' : 'nothing outstanding right now'}</div>
-    <div class="between" style="margin-top:10px">
-      <span class="sm">Received <b class="pos">${money(got)}</b></span>
-      <span class="sm">Spent for them <b>${money(paid)}</b></span></div>
+    <div class="row" style="margin-top:12px;gap:10px;align-items:flex-start">
+      <div class="grow"><div class="tiny muted" style="font-weight:700;white-space:nowrap">RECEIVED</div><b class="pos">${money(got)}</b><div class="tiny muted">all time</div></div>
+      <div class="grow right"><div class="tiny muted" style="font-weight:700;white-space:nowrap">SPENT FOR THEM</div><b>${money(paid)}</b><div class="tiny muted">all time</div></div></div>
+    <div class="tiny muted" style="margin-top:6px">${esc(monLabel(curYM, 1))}: received <b>${money(mGot)}</b> · spent for them <b>${money(mPaid)}</b></div>
     <div class="sep"></div>
     <div class="tiny muted">These entries still move your real account balances, but they are skipped in income, expenses, budgets, savings rate and analytics.</div>
     <div class="row" style="gap:8px;margin-top:12px">
@@ -3216,9 +3261,18 @@ window.renderPass = function () {
           <div class="right"><b class="${isNeg ? 'neg' : ''}">${h ? money(Math.abs(h)) : money(0)}</b>
             <div class="tiny muted">${isNeg ? 'you are out of pocket' : h ? 'held for them' : 'settled'}</div></div>
         </div>
-        ${r.count ? `<div class="sep"></div><div class="between"><span class="tiny muted">received ${money(r.got)}</span>
-          <span class="tiny muted">spent for them ${money(r.paid)}</span>
-          <span class="row" style="gap:6px">
+        ${r.count ? `<div class="sep"></div>
+          <div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px">
+            <div style="min-width:0"><div class="tiny muted" style="font-weight:700">THIS MONTH</div>
+              <div class="tiny">spent for them <b>${money(r.mPaid || 0)}</b><br>received <b class="pos">${money(r.mGot || 0)}</b></div>
+              <div class="tiny muted">${r.mCount ? r.mCount + (r.mCount === 1 ? ' entry' : ' entries') + (r.mOpen ? ' · ' + r.mOpen + ' open' : '') : 'nothing this month'}</div></div>
+            <div class="right" style="min-width:0"><div class="tiny muted" style="font-weight:700">OVERALL</div>
+              <div class="tiny">spent for them <b>${money(r.paid)}</b><br>received <b class="pos">${money(r.got)}</b></div>
+              <div class="tiny muted">${r.count} ${r.count === 1 ? 'entry' : 'entries'}${r.first ? ' · since ' + esc(dayLabel(r.first)) : ''}</div></div>
+          </div>
+          <div class="between" style="margin-top:8px">
+            <span class="tiny muted">${r.open ? r.open + (r.open === 1 ? ' share' : ' shares') + ' still open' : 'all settled'}</span>
+            <span class="row" style="gap:8px">
             ${r.open ? `<span class="tiny" style="font-weight:650;color:var(--accent)" data-act="passsettlewho" data-id="${esc(who)}">Settle ${r.open}</span>` : ''}
             <span class="tiny" style="color:var(--accent)">Ledger ›</span></span></div>` : ''}
       </div>`;

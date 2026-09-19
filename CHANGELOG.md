@@ -3,6 +3,31 @@
 All notable changes to RupeeFlow. The build stamp shown in **Settings → About** matches the entries here,
 so you can confirm at a glance which version your phone is running.
 
+## 1.4.5 — 2026-09-19  ·  build `1.4.5+2026-09-19.1`
+
+Two things you hit while using 1.4.4.
+
+- **The budget total is now exact.** Spreading ₹15,000 evenly across 23 categories used to save
+  ₹14,950 — every category was rounded on its own and the remainders simply vanished. The wizard now
+  hands the last rupees to whoever was cut the most, so the categories always add up to the figure you
+  typed (₹15,000 → 23 × ₹652, exactly ₹15,000). Whole totals still come out in tidy ₹10 steps
+  (and ₹14,950 in ₹5s); a total that cannot be split evenly stays exact rupee-for-rupee, and the
+  editor shows "Adds up to exactly ₹15,000 across 23 categories" *before* you apply it. Fixes all
+  three modes — by last month's spending, evenly, and keep-current-split.
+- **Every pass-through person now has a running summary: this month and overall.** The person's block
+  on the pass screen shows **THIS MONTH** (spent for them, received from them, entries, still open)
+  beside **OVERALL** (the same figures for all time, plus since when). Opening the person gives a
+  **Summary** table with month and all-time columns — spent, received, net (with the sign), and entry
+  counts — and the running-balance list now has a **THIS MONTH** divider above the current month's
+  rows, so the balance you are looking at is never mixed up with last month's. The screen header does
+  the same: all-time received/spent for them, with the month figures on the line below.
+- `tests/options.js` grew from 117 to **138 tests**: group **G** (exact budget totals — even, odd,
+  indivisible, all three modes, through the real editor and across a reload) and group **H**
+  (per-person month/overall summaries, separate totals per person, the ledger's month divider and
+  zero state, and that none of it touches income/expenses). The E- and H-groups' income/expense
+  baselines are captured from the loaded month instead of hard-coded, so they no longer drift as the
+  demo data ages.
+
 ## 1.4.4 — 2026-09-16  ·  build `1.4.4+2026-09-16.2`
 
 Three follow-ups from using 1.4.3 for real: pass-through needed to handle *several* people, money that
