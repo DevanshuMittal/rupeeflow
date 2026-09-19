@@ -23,7 +23,7 @@ and prints a copyable diagnostic report.
 | **Works offline** | Yes — everything is cached on the phone (PWA installable) |
 | **Backend** | Google Sheets + Drive, called directly from the browser (no server, no fees) |
 | **Currency / FY** | ₹ with Indian digit grouping (₹1,45,000 / ₹1.45L / ₹1.2Cr), April–March |
-| **Tested** | **455 checks** across 10 suites — one command: `npm test` (48 app + 59 customisation + 202 options/trips/pass-through/budgets + 33 profiles/decoy + 31 sheet setup + 23 desktop layout + 19 two-device sync + 13 setup checker + 10 update pipeline + the 17-assertion integrity gate) |
+| **Tested** | **474 checks** across 10 suites — one command: `npm test` (48 app + 59 customisation + 221 options/budgets/pass-through/insights + 33 profiles/decoy + 31 sheet setup + 23 desktop layout + 19 two-device sync + 13 setup checker + 10 update pipeline + the 17-assertion integrity gate) |
 
 ---
 
@@ -63,6 +63,9 @@ and prints a copyable diagnostic report.
 | `45-budget-exact.png` | The budget editor showing "Adds up to exactly ₹15,000 across 23 categories" |
 | `46-template-passthrough.png`, `47-template-chip-add-sheet.png` | A template that belongs to a person, and the marked chip it puts in the add sheet |
 | `49-trip-summary.png`, `50-trips-analytics.png` | A trip as one tag: total, by expense type, by payment mode — and every trip in Analytics |
+| `51-settle-per-payment.png`, `52-monthly-defaults.png` | Settle/reopen one payment in a person's ledger · the every-month budget defaults |
+| `53-budgets-every-month.png`, `54-budget-card-explains.png` | "Every month · ₹15,000" with rent ₹12,000 · the budget card explaining pass-through and unbudgeted spend |
+| `55-insight-day-to-day.png`, `56-analytics-day-to-day.png`, `57-committed-vs-day-to-day.png` | Rent kept out of the weekday/weekend maths, the day-to-day Analytics view, and the committed split |
 | `15-customise-layout.png` … `21-customise-dev.png` | Layout, fields, templates, rules, format, theme, dev panel |
 | `22-rule-editor.png`, `23-rule-json.png` | Rule builder + JSON editor |
 | `24-add-sheet-custom.png` | Add sheet with templates + custom fields |
@@ -308,6 +311,18 @@ flight, dinners, the villa, souvenirs:
   that trip alone with every stored column
 * **Analytics → Deep dive → Trips & tags** lists every tag with what it has cost, all time — tap to open
 
+### Committed vs day-to-day (why rent does not distort your averages)
+* Anything in a **fixed** category — or billed by an active **recurring** entry (rent, EMI, SIP,
+  broadband, home transfer) — is *committed*: counted in every total, never divided by days
+* So the **weekday/weekend** insight, the **day-to-day rate** and the **month-end estimate** all use the
+  money you can actually steer. The forecast is *committed + day-to-day pace* — never
+  "total ÷ days elapsed × 30", which is what made rent week look like a ₹1.2 lakh month
+* **Analytics → Daily burn / Calendar** has an **All spending · Day-to-day only** switch, and
+  **Deep dive** adds a *Committed vs day-to-day* card: what is locked up, what is yours to steer, and
+  what the month would close at
+* A **fixed** envelope projects its own amount (Rent shows *Projected ₹24,000 · within budget*, not a fake
+  overshoot), and each insight says plainly when rent and bills are excluded
+
 ### Budgets: one default for every month, and colours that make sense
 * **Budgets → ⚙️ Every month** stores the numbers that apply to *all* months — type the total (say
   ₹15,000), choose *keep my split* / *by last month's spending* / *evenly*, done. Months you never touched
@@ -429,7 +444,7 @@ finance-tracker/
 └─ tests/
    ├─ qa.js              ← 48 end-to-end interaction tests (Playwright)
    ├─ custom.js          ← 59 tests for fields / rules / templates / layout / theme / API
-   ├─ options.js         ← 202 tests for hidden balances, exact budgets, monthly defaults, clear/reset, trips, pass-through settle/reopen, sign-in-once, templates
+   ├─ options.js         ← 221 tests for hidden balances, budgets + monthly defaults, clear/reset, trips, pass-through settle/reopen, committed-vs-day-to-day stats, sign-in-once, templates
    ├─ lib/pw.js          ← finds Playwright wherever it is installed (laptop, CI, sandbox)
    ├─ all.js             ← runs every suite in order — this is what `npm test` and CI run
    ├─ setupcheck.js      ← 13 tests for the setup checker itself
@@ -449,8 +464,8 @@ node tests/custom.js      # customisation layer          (59 tests)
 node tests/setupcheck.js  # setup checker behaviour      (13 tests)
 node tests/update.js      # in-app update pipeline       (10 tests — see GITHUB.md §10)
 node tests/twodevice.js   # phone + laptop sync          (19 tests, mocked Google — no credentials)
-npm test                  # EVERY suite, in order (455 checks) — the same command CI runs
-node tests/options.js     # hide/budget/defaults/trips/pass-through/sign-in (202 tests)
+npm test                  # EVERY suite, in order (474 checks) — the same command CI runs
+node tests/options.js     # hide/budget/defaults/trips/pass-through/insights (221 tests)
 node tests/profiles.js    # profiles, PIN gate, decoy    (33 tests — proves real data never leaks)
 node tests/desktop.js     # laptop layout, phone intact  (23 tests)
 node tests/sheetsetup.js  # Sheet creation + API errors (31 tests, mocked Google)

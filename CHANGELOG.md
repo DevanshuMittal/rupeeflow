@@ -3,6 +3,51 @@
 All notable changes to RupeeFlow. The build stamp shown in **Settings → About** matches the entries here,
 so you can confirm at a glance which version your phone is running.
 
+## 1.4.9 — 2026-09-19  ·  build `1.4.9+2026-09-19.5`
+
+**Rent is not a daily habit — and the app stopped treating it like one.**
+
+You spotted the classic version of this: pay rent on a weekday and the app announces *"weekdays cost more
+than weekends"*. The same mistake sat behind four other numbers. Everything that turns a total into a
+*rate* now splits your spending in two first:
+
+- **Committed** — anything in a **fixed** category (rent, mobile & internet, cloud, subscriptions,
+  insurance, EMI) **plus anything billed by an active recurring entry** (SIP, broadband, home transfer).
+  It is counted in every total, but never divided by days.
+- **Day-to-day** — everything you actually decide about: food, groceries, cabs, dining, shopping.
+
+What changed, concretely:
+
+- **Weekday vs weekend insight** now compares day-to-day spending only, over the *real* number of weekend
+  and weekday days in the month, and says so: *"Day-to-day spending: ₹1,153/day on weekends vs ₹353/day on
+  weekdays — rent, EMIs, bills and transfers are excluded so one big payment cannot skew it."*
+- **Month-end estimate was the worst offender.** Total ÷ days-elapsed × days-in-month turned a rent-week
+  month into an absurd forecast (₹1,21,468 for a month heading to ₹86,765). It now reads
+  **committed + day-to-day pace** and explains itself: *"Committed ₹59,942 + day-to-day at ₹894/day — rent
+  and bills are not multiplied out."*
+- **Day-to-day KPIs**: the Expenses card and Daily-average card report the day-to-day rate, not the total
+  divided by days.
+- **Budget envelopes**: a fixed line is no longer extrapolated — Rent shows *Projected ₹24,000 ·
+  within budget* instead of projecting a ₹37,000 "overshoot" from one payment.
+- **Analytics has a switch**: *All spending* / *Day-to-day only*, on the Daily-burn tab and the
+  Spending-calendar tab, with the weekday heat labelled accordingly. The day-to-day view hides rent,
+  EMIs, bills and transfers — two different questions, two honest answers.
+- **New "Committed vs day-to-day" card** in Analytics → Deep dive: the split in bars, the day-to-day
+  rate, and what share of the month is locked up before you spend anything.
+- A new insight names it outright: *"₹59,942 of this month is committed (rent, EMIs, bills, transfers) and
+  only ₹16,988 is yours to steer — day to day that is ₹894/day."*
+
+Two things fixed in passing: the envelope status tag on the Budgets screen still used the old rule (100%
+was called *over*) — it now shares one `budgetTag()` with everything else, and "Projected" for fixed
+categories no longer invites you to trim a bill you cannot trim.
+
+Tests: `tests/options.js` 202 → **221** (group **L**: rent recognised as committed, the forecast matching
+committed + day-to-day pace while proving the old formula would have been ₹10k+ higher, the weekend
+comparison using flexible numbers with rent excluded, the fixed envelope projecting its own amount and
+reading *at limit* instead of *over*, the Analytics basis switch on both tabs, the committed/day-to-day
+card, all three KPI subtitles, and proof that pass-through money still never enters either side).
+Totals now **474 checks** across ten suites.
+
 ## 1.4.8 — 2026-09-19  ·  build `1.4.8+2026-09-19.4`
 
 Four things you asked about, including one real bug.

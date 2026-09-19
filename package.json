@@ -1,6 +1,6 @@
 {
   "name": "rupeeflow",
-  "version": "1.4.8",
+  "version": "1.4.9",
   "private": true,
   "description": "RupeeFlow \u2014 offline-first personal finance PWA backed by Google Drive Sheets",
   "scripts": {

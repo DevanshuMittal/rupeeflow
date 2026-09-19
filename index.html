@@ -500,7 +500,7 @@ textarea{min-height:64px;resize:vertical}
 
 /* Bump this on every release — tools/bump.js updates it here and in sw.js.
    The running build is compared against the deployed one to offer in-app updates. */
-const APP_BUILD = '1.4.8+2026-09-19.4';
+const APP_BUILD = '1.4.9+2026-09-19.5';
 
 /* ---------------------------------- 1. utils ------------------------------- */
 const $  = (s, r = document) => r.querySelector(s);
@@ -1093,6 +1093,34 @@ function accBalance(id) {
 }
 const netWorth = () => sum(S.accounts, a => a.type === 'credit' ? -accBalance(a.id) : accBalance(a.id));
 const liquid = () => sum(S.accounts.filter(a => ['bank', 'wallet', 'cash'].includes(a.type)), a => accBalance(a.id));
+/* ---- committed vs day-to-day -------------------------------------------------
+   Rent is the same ₹24,000 whenever it is paid — it lands on one weekday and makes
+   "weekdays cost more than weekends", "biggest day" and "at this pace you'll spend
+   ₹2.4 lakh" all say the wrong thing. Anything in a fixed category, or billed by an
+   active recurring entry (SIP, broadband, home transfer), is *committed*: counted in
+   totals, but never used to work out a per-day rate. ---------------------------- */
+const committedCatIds = () => uniq([
+  ...S.categories.filter(c => c.kind === 'fixed').map(c => c.id),
+  ...(S.recurring || []).filter(r => r.active && r.type !== 'income').map(r => r.cat)
+].filter(Boolean));
+const isCommitted = (t, ids) => (ids || committedCatIds()).includes(t.cat);
+/* every expense that is actually yours, optionally day-to-day only */
+const myExpenses = (ym, list) => (list || monthTx(ym)).filter(t => t.type === 'expense' && !t.pass);
+function spendSplit(ym, list) {
+  const ids = committedCatIds();
+  const mine = myExpenses(ym, list);
+  const fixed = sum(mine.filter(t => isCommitted(t, ids)), t => t.amount);
+  return { all: sum(mine, t => t.amount), fixed, flex: sum(mine.filter(t => !isCommitted(t, ids)), t => t.amount), ids };
+}
+/* month-end estimate the honest way: what you have committed + day-to-day × days in month.
+   (Total spent ÷ days elapsed × days in month is what produced absurd forecasts on rent week.) */
+function monthForecast(ym) {
+  const s = spendSplit(ym);
+  const dim = periodDays(ym), dayN = ym === currentYM() ? periodElapsed(ym) : dim;
+  const flexRate = s.flex / Math.max(1, dayN);
+  const total = s.fixed + flexRate * dim;
+  return { ...s, dim, dayN, flexRate, total, more: Math.max(0, total - s.all) };
+}
 /* how much of a category's budget is spent *by you* — pass-through money never counts */
 const budgetSpentOf = (catId, ym) => sum(monthTx(ym || curYM).filter(t => t.type === 'expense' && t.cat === catId && !t.pass), t => t.amount);
 const budgetFor = (ym, catId) => { const b = S.budgets[ym] || {}; if (b[catId] != null) return b[catId]; const d = S.budgets['default'] || {}; return d[catId] != null ? d[catId] : (DEFAULT_BUDGETS[catId] || 0); };
@@ -1591,7 +1619,8 @@ function insights(ym) {
   const cur = totals(monthTx(ym)), prev = totals(monthTx(addMonths(ym, -1)));
   const dayN = ym === currentYM() ? periodElapsed(ym) : periodDays(ym);
   const dim = periodDays(ym);
-  const pace = cur.exp / Math.max(1, dayN) * dim;
+  const fc = monthForecast(ym);
+  const pace = fc.total;
   const cats = catSpend(ym, 'expense'), pCats = catSpend(addMonths(ym, -1), 'expense');
   if (cur.exp > 0) {
     const top = cats[0];
@@ -1603,15 +1632,23 @@ function insights(ym) {
   }
   if (ym === currentYM() && pace > 0 && prev.exp > 0) {
     const d = ((pace - prev.exp) / prev.exp) * 100;
-    out.push({ e: pace > prev.exp ? '⚠️' : '✅', t: `At the current pace you'll close ${monLabel(ym)} at about <b>${money(pace)}</b>, ${Math.abs(d).toFixed(0)}% ${d > 0 ? 'above' : 'below'} last month (${money(prev.exp)}).` });
+    out.push({ e: pace > prev.exp ? '⚠️' : '✅', t: `On track to close ${monLabel(ym)} around <b>${money(pace)}</b>, ${Math.abs(d).toFixed(0)}% ${d > 0 ? 'above' : 'below'} last month (${money(prev.exp)}). <span class="muted">Committed ${money(fc.fixed)} + day-to-day at ${money(fc.flexRate)}/day — rent and bills are not multiplied out.</span>` });
+  }
+  if (fc.fixed > 0 && fc.flex > 0) {
+    out.push({ e: '🧱', t: `<b>${money(fc.fixed)}</b> of this month is committed (rent, EMIs, bills, transfers) and only <b>${money(fc.flex)}</b> is yours to steer — day to day that is <b>${money(fc.flexRate)}</b>/day.` });
   }
   if (cur.inc > 0) {
     const rate = (cur.net / cur.inc) * 100;
     out.push({ e: rate >= 30 ? '🌱' : rate >= 15 ? '🙂' : '🚨', t: `Savings rate is <b>${rate.toFixed(1)}%</b> (${money(cur.net)} kept). ${rate >= 30 ? 'Outstanding — you are ahead of the 30% rule.' : rate >= 15 ? 'Healthy, but 30% would build your safety net faster.' : 'Below 15% — trim the flexible buckets below.'}` });
   }
-  const ws = sum(S.transactions.filter(t => ymOf(t.date) === ym && t.type === 'expense' && !t.pass && [0, 6].includes(dOf(t.date).getDay())), t => t.amount);
-  const wd = cur.exp - ws, nWd = Math.max(1, dim - Math.round(dim * 2 / 7)), nWe = Math.max(1, Math.round(dim * 2 / 7));
-  if (ws > 0 && wd > 0) out.push({ e: '📆', t: `Weekends cost <b>${money(ws / nWe)}</b>/day vs <b>${money(wd / nWd)}</b>/day on weekdays — ${(ws / nWe) > (wd / nWd) ? 'your social spending is the pressure point.' : 'weekdays carry more weight right now.'}` });
+  /* per-day rates use day-to-day spending only, and count the real weekend/weekday days —
+     rent landing on the 3rd used to make this insight say weekdays cost 3× as much */
+  const flexIds = committedCatIds();
+  const flexTx = S.transactions.filter(t => ymOf(t.date) === ym && t.type === 'expense' && !t.pass && !isCommitted(t, flexIds));
+  const isWe = d => [0, 6].includes(dOf(d).getDay());
+  const weDays = periodDates(ym).filter(isWe).length, wdDays = Math.max(1, periodDates(ym).length - weDays);
+  const ws = sum(flexTx.filter(t => isWe(t.date)), t => t.amount), wd = sum(flexTx.filter(t => !isWe(t.date)), t => t.amount);
+  if (ws > 0 && wd > 0) out.push({ e: '📆', t: `Day-to-day spending: <b>${money(ws / Math.max(1, weDays))}</b>/day on weekends vs <b>${money(wd / wdDays)}</b>/day on weekdays — ${(ws / Math.max(1, weDays)) > (wd / wdDays) ? 'your social spending is the pressure point.' : 'your regular days carry more of it.'} <span class="muted">Rent, EMIs, bills and transfers are excluded so one big payment cannot skew it.</span>` });
   const subs = S.recurring.filter(r => r.active && ['c_subs', 'c_cloud', 'c_net'].includes(r.cat));
   if (subs.length) out.push({ e: '🧾', t: `Subscriptions & tools burn <b>${money(sum(subs, r => r.amount))}</b>/month across ${subs.length} services — ${sum(subs, r => r.amount) * 12 > cur.inc * 0.5 ? 'cancel two and fund a goal instead.' : 'audit yearly once.'}` });
   const pend = reimbPending();
@@ -1648,16 +1685,17 @@ function renderNav() {
 }
 function subsMonthly() { return sum((S.recurring || []).filter(r => r.active && ['c_subs', 'c_cloud', 'c_net'].includes(r.cat)), r => r.amount); }
 function kpiData(id, ctx) {
-  const { ym, cur, prev, nw, nwDelta, pace, daily, budSpent, budTotal, cats } = ctx;
+  const { ym, cur, prev, nw, nwDelta, pace, daily, budSpent, budTotal, cats, spend, fc } = ctx;
+  const sp = spend || spendSplit(ym), fcast = fc || monthForecast(ym);
   switch (id) {
     case 'income': return { v: money(cur.inc), sub: prev.inc ? ((cur.inc >= prev.inc ? '▲ ' : '▼ ') + inrC(Math.abs(cur.inc - prev.inc)) + ' vs last period') : 'this period', cls: 'pos' };
-    case 'expense': return { v: money(cur.exp), sub: money(daily) + ' / day average', bar: clamp(pct(cur.exp, prev.exp || cur.exp * 1.1), 0, 100) };
+    case 'expense': return { v: money(cur.exp), sub: money(daily) + '/day day-to-day · ' + inrC(sp.fixed) + ' committed', bar: clamp(pct(cur.exp, prev.exp || cur.exp * 1.1), 0, 100) };
     case 'saved': return { v: money(cur.net), sub: 'savings rate ' + cur.rate.toFixed(1) + '%', cls: cur.net >= 0 ? 'pos' : 'neg' };
-    case 'forecast': return { v: money(pace), sub: pace > cur.exp ? '≈ ' + money(pace - cur.exp) + ' more to go' : 'no more spending' };
+    case 'forecast': return { v: money(pace), sub: 'committed ' + inrC(fcast.fixed) + ' + day-to-day pace' };
     case 'networth': return { v: money(nw), sub: (nwDelta >= 0 ? '▲ ' : '▼ ') + inrC(Math.abs(nwDelta)) + ' MoM' };
     case 'liquid': return { v: money(liquid()), sub: 'bank + cash + wallet' };
     case 'budgetLeft': return { v: money(Math.max(0, budTotal - budSpent)), sub: budTotal ? pct(budSpent, budTotal).toFixed(0) + '% used' : 'no budgets set', cls: budSpent > budTotal ? 'neg' : 'pos' };
-    case 'dailyAvg': return { v: money(daily), sub: 'across ' + periodElapsed(ym) + ' days' };
+    case 'dailyAvg': return { v: money(daily), sub: 'day-to-day · ' + periodElapsed(ym) + ' days' };
     case 'savingsRate': return { v: cur.rate.toFixed(1) + '%', sub: money(cur.net) + ' kept' };
     case 'subsBurn': return { v: money(subsMonthly()), sub: 'annualised ' + inrC(subsMonthly() * 12) };
     case 'reimbPending': return { v: money(reimbPending()), sub: reimbPending() ? 'awaiting claim' : 'all settled', cls: reimbPending() ? '' : 'pos' };
@@ -1679,7 +1717,11 @@ window.renderHome = function () {
   const nwPrev = nwSer[nwSer.length - 2] ? nwSer[nwSer.length - 2].v : nw;
   const nwDelta = nw - nwPrev;
   const dayN = ym === currentYM() ? periodElapsed(ym) : periodDays(ym), dim = periodDays(ym);
-  const daily = cur.exp / Math.max(1, dayN), pace = daily * dim;
+  /* per-day figures and the month-end estimate use committed + day-to-day, never a flat
+     division of the total (rent on the 3rd used to imply a ₹2 lakh month) */
+  const spend = spendSplit(ym);
+  const fc = monthForecast(ym);
+  const daily = fc.flexRate, pace = fc.total;
   const cats = catSpend(ym, 'expense');
   const budgetIds = budgetIdsFor(ym);
   const budTotal = sum(budgetIds, id => budgetFor(ym, id));
@@ -1693,7 +1735,7 @@ window.renderHome = function () {
   const bills = upcomingBills(10);
   const now = currentYM();
   const cycle = cycleStart();
-  const ctx = { ym, cur, prev, nw, nwDelta, pace, daily, budSpent, budTotal, cats };
+  const ctx = { ym, cur, prev, nw, nwDelta, pace, daily, budSpent, budTotal, cats, spend, fc };
 
   const cycleBanner = cycle > 1
     ? `<div class="banner ${pct(budSpent, budTotal || 1) > 100 ? 'dng' : ''}"><span class="e">🗓</span><div><b>Salary cycle ${esc(periodLabel(ym))}</b> — your month runs from day ${cycle}. <button class="btn ghost sm" data-nav="cust" style="padding:2px 6px">change</button></div></div>`
@@ -2323,16 +2365,25 @@ function txDetail(id) {
    12. ANALYTICS
    ========================================================================== */
 let anTab = 'flow';
+/* 'all' = every rupee out · 'flex' = day-to-day only (rent, EMIs, bills, transfers excluded) */
+let anBasis = 'all';
 window.renderAnalytics = function () {
   const ym = curYM, m = monthTx(ym), t = totals(m), prev = totals(monthTx(addMonths(ym, -1)));
   const cats = catSpend(ym, 'expense'), incs = catSpend(ym, 'income');
   const dates = periodDates(ym), dim = dates.length;
   const today = ym === currentYM() ? periodElapsed(ym) : dim;
-  const byDay = groupBy(m.filter(x => x.type === 'expense' && !x.pass), x => x.date);   /* pass-through is not your burn */
+  const dayN = today;                              /* days of this period that have happened */
+  /* All spending, or only what you can actually steer — switchable, because the answer to
+     "where does my money go" and "what is my day-to-day burn" are different questions. */
+  const basis = anBasis === 'flex';
+  const onBasis = x => x.type === 'expense' && !x.pass && (!basis || !isCommitted(x));
+  const prevList = monthTx(addMonths(ym, -1));
+  const bt = { exp: sum(m.filter(onBasis), x => x.amount), prev: sum(prevList.filter(onBasis), x => x.amount) };
+  const byDay = groupBy(m.filter(onBasis), x => x.date);
   const daily = dates.map(k => sum(byDay[k] || [], x => x.amount));
   const cum = daily.map((_, i) => sum(daily.slice(0, i + 1)));
   const pmD = addMonths(ym, -1), pDates = periodDates(pmD);
-  const pByDay = groupBy(monthTx(pmD).filter(x => x.type === 'expense' && !x.pass), x => x.date);
+  const pByDay = groupBy(prevList.filter(onBasis), x => x.date);
   const pDaily = pDates.map(k => sum(pByDay[k] || [], x => x.amount));
   const pCum = Array.from({ length: dim }, (_, i) => sum(pDaily.slice(0, Math.min(i + 1, pDaily.length))));
   const wd = [0, 0, 0, 0, 0, 0, 0], wdN = [0, 0, 0, 0, 0, 0, 0];
@@ -2356,17 +2407,22 @@ window.renderAnalytics = function () {
   ${anTab === 'flow' ? `
   <div class="card pad">
     <div class="between"><h4>Daily burn & cumulative flow</h4><span class="tag p">${esc(monLabel(ym, 1))}</span></div>
+    <div class="chips" style="margin-top:8px">
+      <span class="chip ${!basis ? 'on' : ''}" data-basis="all">All spending</span>
+      <span class="chip ${basis ? 'on' : ''}" data-basis="flex">Day-to-day only</span>
+    </div>
+    <div class="tiny muted" style="margin-top:6px">${basis ? 'Rent, EMIs, bills and transfers are hidden — this is the money you decide about day to day.' : 'Everything you spent, including rent, EMIs and bills.'}</div>
     <div class="grid3 center" style="margin:12px 0 6px">
-      <div><div class="tiny muted" style="font-weight:700">SPENT</div><b>${money(t.exp)}</b></div>
-      <div><div class="tiny muted" style="font-weight:700">LAST MONTH</div><b>${money(prev.exp)}</b></div>
-      <div><div class="tiny muted" style="font-weight:700">CHANGE</div><b class="${t.exp > prev.exp ? 'neg' : 'pos'}">${prev.exp ? ((t.exp - prev.exp) / prev.exp * 100).toFixed(0) + '%' : '—'}</b></div>
+      <div><div class="tiny muted" style="font-weight:700">${basis ? 'DAY-TO-DAY' : 'SPENT'}</div><b>${money(bt.exp)}</b></div>
+      <div><div class="tiny muted" style="font-weight:700">LAST MONTH</div><b>${money(bt.prev)}</b></div>
+      <div><div class="tiny muted" style="font-weight:700">CHANGE</div><b class="${bt.exp > bt.prev ? 'neg' : 'pos'}">${bt.prev ? ((bt.exp - bt.prev) / bt.prev * 100).toFixed(0) + '%' : '—'}</b></div>
     </div>
     ${areaChart([{ values: cum, color: 'var(--accent)' }, { values: pCum, color: 'var(--muted)', dash: true, area: false }], { labels: [`1`, ``, `${dim}`], h: 160 })}
     <div class="row tiny muted" style="gap:14px;margin-top:4px"><span>— solid: this month cumulative</span><span>-- dashed: last month</span></div>
     <div class="sep"></div>
     <h4 style="margin-bottom:8px">Daily spend</h4>
     ${areaChart([{ values: daily, color: '#F97316', area: true }], { h: 110, grid: false })}
-    <div class="between tiny muted" style="margin-top:2px"><span>Biggest day: ${bigDay}</span><span>Zero-spend days: ${zeroDays}</span></div>
+    <div class="between tiny muted" style="margin-top:2px"><span>${basis ? 'Biggest day-to-day day' : 'Biggest day'}: ${bigDay}</span><span>${basis ? 'No-spend days' : 'Zero-spend days'}: ${zeroDays}</span></div>
   </div>
   <div class="card pad" style="margin-top:12px">
     <h4>Flow tracker</h4>
@@ -2417,13 +2473,17 @@ window.renderAnalytics = function () {
   ${anTab === 'cal' ? `
   <div class="card pad">
     <div class="between"><h4>Spending calendar</h4><span class="sm muted">${esc(monLabel(ym))}</span></div>
+    <div class="chips" style="margin-top:8px">
+      <span class="chip ${!basis ? 'on' : ''}" data-basis="all">All spending</span>
+      <span class="chip ${basis ? 'on' : ''}" data-basis="flex">Day-to-day only</span>
+    </div>
     <div style="margin-top:12px">${heatmap(Object.fromEntries(dates.map((k, i) => [k, daily[i]])))}</div>
     <div class="row tiny muted" style="margin-top:10px;gap:6px;align-items:center">
       <span>Less</span>${[0.06, 0.25, 0.45, 0.65, 0.9].map(o => `<i style="width:14px;height:14px;border-radius:4px;background:${hexA(themeById(S.settings.theme).a, o)}"></i>`).join('')}<span>More</span>
     </div>
   </div>
   <div class="card pad" style="margin-top:12px">
-    <h4>Heat by weekday</h4>
+    <h4>Heat by weekday${basis ? ' · day-to-day' : ''}</h4>
     <div class="grid3" style="margin-top:10px">
       ${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d, i) => `<div class="center"><div class="tiny muted" style="font-weight:700">${d.toUpperCase()}</div>
         <div style="font-weight:750">${inrC(wd[i] / Math.max(1, wdN[i]))}</div><div class="tiny muted">avg/day</div></div>`).join('')}
@@ -2432,6 +2492,14 @@ window.renderAnalytics = function () {
 
   ${anTab === 'deep' ? `
   <div class="card pad">
+    <div class="between"><h4>Committed vs day-to-day</h4><span class="tiny muted">${esc(monLabel(ym, 1))}</span></div>
+    <div class="tiny muted" style="margin:4px 0 8px">Rent, EMIs, bills and transfers are the same whatever day they land — kept out of every per-day average, forecast and weekday comparison.</div>
+    ${(() => { const sp = spendSplit(ym), mx = Math.max(1, sp.fixed, sp.flex);
+      return statBar('Committed (rent, EMIs, bills, transfers)', sp.fixed, mx, 'var(--muted)') +
+             statBar('Day-to-day (everything you steer)', sp.flex, mx, 'var(--accent)') +
+             `<div class="tiny muted" style="margin-top:8px">Day-to-day is running at <b>${money(sp.flex / Math.max(1, dayN))}/day</b>${sp.fixed ? ` · committed ${money(sp.fixed)} is ${pct(sp.fixed, sp.fixed + sp.flex).toFixed(0)}% of the month` : ''}.</div>`; })()}
+  </div>
+  <div class="card pad" style="margin-top:12px">
     <h4>Top spend locations & notes</h4>
     ${topNotes.map(n => statBar(n.k, n.amt, topNotes[0].amt, 'var(--accent)')).join('') || '<div class="muted sm">Add notes to your transactions to see this.</div>'}
   </div>
@@ -2462,6 +2530,8 @@ window.renderAnalytics = function () {
   <div style="height:10px"></div>`;
 
   $$('[data-an]', $('#s-analytics')).forEach(c => c.onclick = () => { anTab = c.dataset.an; renderAnalytics(); });
+  /* the all-spending / day-to-day switch, on both tabs that use it */
+  $$('[data-basis]', $('#s-analytics')).forEach(c => c.onclick = () => { anBasis = c.dataset.basis; renderAnalytics(); });
 };
 function catDrill(catId) {
   const ym = curYM, list = monthTx(ym).filter(t => t.cat === catId).sort(sortTxDesc);
@@ -2745,12 +2815,14 @@ window.renderBudgets = function () {
   </div>
   <div class="section"><div class="section-head"><h2>Envelopes</h2><span class="tiny muted" style="margin-left:auto">${rows.length} active</span></div>
     ${rows.length ? rows.map(r => { const p = pct(r.sp, r.lim), left = r.lim - r.sp;
-      const pace = r.sp / Math.max(1, dayN) * dim;
+      /* a committed envelope is already what it is; only flexible ones get a run-rate */
+      const fixedCat = isCommitted({ cat: r.id }, committedCatIds());
+      const pace = fixedCat ? r.sp : r.sp / Math.max(1, dayN) * dim;
       const c = catById(r.id);
       return `<div class="card pad" style="margin-bottom:10px" data-act="budget" data-id="${r.id}">
         <div class="row"><div class="av" style="background:${hexA(c.color, .14)}">${c.e}</div>
           <div class="grow"><div class="row"><b style="font-size:14.5px">${esc(c.name)}</b>${fixedIds.includes(r.id) ? '<span class="tag">fixed</span>' : ''}
-            ${p >= 100 ? '<span class="tag d">over</span>' : p >= 85 ? '<span class="tag w">almost</span>' : p >= 60 ? '<span class="tag p">on track</span>' : '<span class="tag g">healthy</span>'}</div>
+            ${budgetTag(p)}</div>
             <div class="muted tiny">${ym === currentYM() ? 'Projected ' + money(pace) + (pace > r.lim ? ' · overshoot ' + money(pace - r.lim) : ' · within budget') : ''}</div></div>
           <div class="right"><b class="num">${money(r.sp)}</b><div class="tiny muted">of ${money(r.lim)}</div></div></div>
         <div class="progress" style="margin-top:10px"><i style="width:${clamp(p, 0, 100)}%;background:${progressColor(p)}"></i></div>

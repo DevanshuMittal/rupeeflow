@@ -5,7 +5,7 @@
    - never caches Google API / identity traffic
    BUILD is kept in sync with index.html by tools/bump.js
    ========================================================================== */
-const BUILD = '1.4.8+2026-09-19.4';
+const BUILD = '1.4.9+2026-09-19.5';
 const CACHE = 'rupeeflow-' + BUILD;
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './setup-check.html'];
 
