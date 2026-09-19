@@ -3,6 +3,33 @@
 All notable changes to RupeeFlow. The build stamp shown in **Settings → About** matches the entries here,
 so you can confirm at a glance which version your phone is running.
 
+## 1.4.6 — 2026-09-19  ·  build `1.4.6+2026-09-19.1`
+
+Quick templates can be pass-through too.
+
+- **A template can belong to a person.** In **Customise → Templates** the editor now has the same
+  **🤝 Pass-through** switch as the add sheet: turn it on, pick who the money is for (or type a new
+  name right there), and every tap of that template books the entry straight into that person's
+  pass-through block. It stays out of your income, expenses, budgets and savings rate, exactly like a
+  hand-entered pass-through — so *"Papa medicines ₹4,000"* is one tap, in the right bucket, with no
+  chance of it being counted as your own spending.
+- **You can see it is for them before you tap it.** The template row in Customise, the dashboard tile,
+  and the chip at the top of the add sheet all carry the person — *"Papa medicines · ₹4,000 🤝 Father"*.
+  Logging shows a toast that names them, and tapping the chip in the add sheet pre-fills the
+  pass-through toggle *and* the person, so you can still change the amount and save.
+- **Refuses to guess**: a pass-through template with nobody named is refused ("Say whose money it is
+  — pick a person or type a name"), and a name typed into the template is registered with the other
+  people so it appears in the add sheet, the pass screen and the person registry.
+- Two bugs the new tests caught along the way: filling the add sheet from a pass-through template
+  dropped the person (the chip wrote the draft, but the sheet re-read the name from its own input —
+  the entry saved as "Unnamed"); and a person typed into a template was never registered.
+- `tests/options.js` grew from 138 to **156 tests** (group **I**: the template switch, the person
+  picker, refusal without a person, running it from Customise and from the dashboard, the marked
+  chip, the pre-filled add sheet, and that an ordinary template is untouched). `tests/options.js`'s
+  D-group settle check was also made deterministic — it used to click "the first row", which depends
+  on sort ties. Totals now **392 tests** across the suites. A `tools/setup-tests.sh` script now sets
+  up the test browser in one command on a fresh machine.
+
 ## 1.4.5 — 2026-09-19  ·  build `1.4.5+2026-09-19.1`
 
 Two things you hit while using 1.4.4.

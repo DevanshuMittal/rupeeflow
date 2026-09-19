@@ -23,7 +23,7 @@ and prints a copyable diagnostic report.
 | **Works offline** | Yes — everything is cached on the phone (PWA installable) |
 | **Backend** | Google Sheets + Drive, called directly from the browser (no server, no fees) |
 | **Currency / FY** | ₹ with Indian digit grouping (₹1,45,000 / ₹1.45L / ₹1.2Cr), April–March |
-| **Tested** | 374 automated tests passing (48 app + 59 customisation + 138 options + 33 profiles/decoy + 31 sheet setup + 23 desktop layout + 19 two-device sync + 13 setup checker + 10 update pipeline) + a 17-assertion CI gate |
+| **Tested** | 392 automated tests passing (48 app + 59 customisation + 156 options + 33 profiles/decoy + 31 sheet setup + 23 desktop layout + 19 two-device sync + 13 setup checker + 10 update pipeline) + a 17-assertion CI gate |
 
 ---
 
@@ -61,6 +61,7 @@ and prints a copyable diagnostic report.
 | `41-add-split-pass.png`, `42-signin-once.png` | Splitting one payment between two people · sign in once |
 | `43-passthrough-month-summary.png`, `44-ledger-month-summary.png` | Each person's this-month vs overall figures, and the month divider in their running balance |
 | `45-budget-exact.png` | The budget editor showing "Adds up to exactly ₹15,000 across 23 categories" |
+| `46-template-passthrough.png`, `47-template-chip-add-sheet.png` | A template that belongs to a person, and the marked chip it puts in the add sheet |
 | `15-customise-layout.png` … `21-customise-dev.png` | Layout, fields, templates, rules, format, theme, dev panel |
 | `22-rule-editor.png`, `23-rule-json.png` | Rule builder + JSON editor |
 | `24-add-sheet-custom.png` | Add sheet with templates + custom fields |
@@ -286,6 +287,16 @@ Install RupeeFlow on the new phone → **More → Drive Sync** → paste the sam
 * Set a single category on its own from the budgets screen, and tick *Apply to future months* to save
   it as your default
 
+### Templates that belong to someone
+* **Customise → Templates** has the same **🤝 Pass-through** switch as the add sheet: pick the person
+  once and every tap books it into their block — *"Papa medicines ₹4,000"* becomes one tap that can
+  never be counted as your own spending
+* The template row, the dashboard tile and the add-sheet chip all show who it is for
+  (*"Papa medicines · ₹4,000 🤝 Father"*), and tapping the chip pre-fills the pass toggle and the
+  person so you can still adjust the amount
+* A pass-through template with nobody named is refused rather than silently saved; a name you type is
+  added to your people list
+
 **Settings → Data & backup** gives you one sheet where you tick exactly what goes — transactions,
 pass-through entries only, reimbursement claims, account opening balances, budget limits, bills,
 goals, loans — with a live summary and a cancel that really changes nothing.
@@ -375,7 +386,7 @@ finance-tracker/
 └─ tests/
    ├─ qa.js              ← 48 end-to-end interaction tests (Playwright)
    ├─ custom.js          ← 59 tests for fields / rules / templates / layout / theme / API
-   ├─ options.js         ← 138 tests for hidden balances, exact budgets, clear/reset, pass-through (many people), sign-in-once
+   ├─ options.js         ← 156 tests for hidden balances, exact budgets, clear/reset, pass-through (many people), sign-in-once, pass-through templates
    ├─ setupcheck.js      ← 13 tests for the setup checker itself
    ├─ update.js          ← 10 tests proving the in-app update flow works
    ├─ ci-check.js        ← 17-assertion integrity gate used by GitHub Actions
@@ -393,7 +404,7 @@ node tests/custom.js      # customisation layer          (59 tests)
 node tests/setupcheck.js  # setup checker behaviour      (13 tests)
 node tests/update.js      # in-app update pipeline       (10 tests — see GITHUB.md §10)
 node tests/twodevice.js   # phone + laptop sync          (19 tests, mocked Google — no credentials)
-node tests/options.js     # hide/budget/clear/pass-through/sign-in (138 tests)
+node tests/options.js     # hide/budget/clear/pass-through/sign-in/templates (156 tests)
 node tests/profiles.js    # profiles, PIN gate, decoy    (33 tests — proves real data never leaks)
 node tests/desktop.js     # laptop layout, phone intact  (23 tests)
 node tests/sheetsetup.js  # Sheet creation + API errors (31 tests, mocked Google)

@@ -500,7 +500,7 @@ textarea{min-height:64px;resize:vertical}
 
 /* Bump this on every release — tools/bump.js updates it here and in sw.js.
    The running build is compared against the deployed one to offer in-app updates. */
-const APP_BUILD = '1.4.5+2026-09-19.1';
+const APP_BUILD = '1.4.6+2026-09-19.2';
 
 /* ---------------------------------- 1. utils ------------------------------- */
 const $  = (s, r = document) => r.querySelector(s);
@@ -1757,7 +1757,7 @@ window.renderHome = function () {
   const tpls = (S.templates || []).slice(0, 3);
   parts.quick = `<div class="section"><div class="section-head"><h2>Quick actions</h2><button class="link" data-nav="cust" data-tab="templates">Templates</button></div>
     <div class="tilegrid">
-      ${tpls.map(t => `<button class="tile" data-act="tpl" data-id="${t.id}"><span class="e">${t.e || '⚡'}</span><b>${esc(t.label)}</b><span>${inr(t.amount)}</span></button>`).join('')}
+      ${tpls.map(t => `<button class="tile" data-act="tpl" data-id="${t.id}"><span class="e">${t.e || '⚡'}</span><b>${esc(t.label)}</b><span>${t.pass ? '🤝 ' + esc(t.who || 'for them') + ' · ' + inr(t.amount) : inr(t.amount)}</span></button>`).join('')}
       <button class="tile" data-act="add" data-type="expense"><span class="e">➖</span><b>Add expense</b></button>
       <button class="tile" data-act="add" data-type="income"><span class="e">➕</span><b>Add income</b></button>
       <button class="tile" data-act="add" data-type="transfer"><span class="e">🔁</span><b>Transfer</b></button>
@@ -1907,7 +1907,7 @@ function txSheet(id, preset) {
     const list = (S.templates || []).filter(t => draft.type === 'transfer' ? false : true);
     if (!list.length) return '';
     return `<div class="tiny muted" style="font-weight:700;margin-bottom:6px">QUICK TEMPLATES <span style="font-weight:600;text-transform:none;letter-spacing:0">— tap to fill</span></div>
-      <div class="chips" style="margin-bottom:12px">${list.map(t => `<span class="chip" data-tpl="${t.id}">${t.e || '⚡'} ${esc(t.label)} · ${inr(t.amount)}</span>`).join('')}</div>`;
+      <div class="chips" style="margin-bottom:12px">${list.map(t => `<span class="chip" data-tpl="${t.id}">${t.e || '⚡'} ${esc(t.label)} · ${inr(t.amount)}${t.pass ? ` <b>🤝 ${esc(t.who || 'pass-through')}</b>` : ''}</span>`).join('')}</div>`;
   };
   const body = () => `
     ${templatesRow()}
@@ -2138,6 +2138,10 @@ function txSheet(id, preset) {
           const tp = (S.templates || []).find(t => t.id === c.dataset.tpl); if (!tp) return;
           draft.type = tp.type || 'expense'; draft.cat = tp.cat || draft.cat; draft.acc = tp.acc || draft.acc;
           draft.note = tp.note || tp.label; draft.tags = [...(tp.tags || [])]; draft.fields = Object.assign({}, draft.fields || {}, tp.fields || {});
+          /* a pass-through template fills the pass toggle and the person too. sync() reads the
+             person back out of #fWho, so write it into the input as well or it is clobbered. */
+          draft.pass = tp.pass ? 1 : 0; draft.who = tp.pass ? (tp.who || '') : ''; draft.split = 0; draft.shares = [];
+          const wi = $('#fWho'); if (wi) wi.value = draft.who;
           expr = String(tp.amount || 0);
           vibrate(10); sync(true);
         });
@@ -5210,7 +5214,7 @@ function renderCustomize() {
       <div class="tiny muted" style="margin-bottom:10px">One tap to log a routine expense. Templates show up at the top of the add sheet and on the dashboard.</div>
       ${(S.templates || []).map(t => `<div class="bf" style="padding-left:0;padding-right:0">
         <div class="av" style="background:${hexA(catById(t.cat).color, .14)}">${t.e || '⚡'}</div>
-        <div class="grow"><div class="t1">${esc(t.label)} <span class="tag">${t.type}</span></div>
+        <div class="grow"><div class="t1">${esc(t.label)} <span class="tag">${t.type}</span>${t.pass ? ` <span class="tag">🤝 ${esc(t.who || 'pass-through')}</span>` : ''}</div>
         <div class="t2">${inr(t.amount)} · ${esc(catById(t.cat).name)} · ${esc(accById(t.acc).name)}${t.note ? ' · ' + esc(t.note) : ''}</div></div>
         <button class="btn sm primary" data-tpl-run="${t.id}">Log</button>
         <button class="btn sm soft" data-tpl-edit="${t.id}">✏️</button></div>`).join('') || '<div class="muted sm" style="padding:8px 0">No templates yet.</div>'}
@@ -5442,7 +5446,8 @@ function fieldSheet(id) {
 /* --------------------------- template editor ----------------------------- */
 function tplSheet(id) {
   const t = (S.templates || []).find(x => x.id === id);
-  const d = t ? { ...t } : { label: '', e: '⚡', type: 'expense', amount: 0, cat: 'c_food', acc: (S.accounts[0] || {}).id, note: '', tags: [] };
+  const d = t ? { ...t } : { label: '', e: '⚡', type: 'expense', amount: 0, cat: 'c_food', acc: (S.accounts[0] || {}).id, note: '', tags: [], pass: 0, who: '' };
+  let tpPass = d.pass ? 1 : 0, tpWho = d.who || '';
   const EM = ['⚡', '☕', '🚇', '🍱', '🚕', '🛒', '⛽', '💊', '🎬', '📶', '☁️', '🍺', '🎁', '💪', '🏠', '🧾'];
   openSheet({
     title: t ? 'Edit template' : 'New template',
@@ -5454,17 +5459,51 @@ function tplSheet(id) {
       <div class="field"><label>Category</label><select id="tpCat">${S.categories.filter(x => x.type === d.type).map(x => `<option value="${x.id}" ${d.cat === x.id ? 'selected' : ''}>${x.e} ${esc(x.name)}</option>`).join('')}</select></div>
       <div class="field"><label>Account</label><select id="tpAcc">${S.accounts.map(a => `<option value="${a.id}" ${d.acc === a.id ? 'selected' : ''}>${a.e} ${esc(a.name)}</option>`).join('')}</select></div></div>
     <div class="field"><label>Note</label><input id="tpNote" value="${esc(d.note || '')}" placeholder="optional"></div>
+    <div class="opt-row" style="border:1px solid var(--border);border-radius:13px">
+      <div class="grow"><strong>🤝 Pass-through</strong><span>Log it for someone else — never your income or expense</span></div>
+      <label class="switch"><input type="checkbox" id="tpPass" ${tpPass ? 'checked' : ''}><span class="slider"></span></label></div>
+    <div id="tpPassBox" style="display:${tpPass ? 'block' : 'none'}">
+      <div class="field"><label>Whose money is it?</label>
+        <div class="chips" id="tpWhoChips" style="flex-wrap:wrap;overflow:visible"></div>
+        <input id="tpWho" value="${esc(tpWho)}" placeholder="e.g. Father"></div>
+      <div class="banner"><span class="e">ℹ️</span><div>Every time you tap this template the entry lands in <b>their</b> pass-through block — out of your income, expenses and budgets.</div></div>
+    </div>
     <div class="field"><label>Icon</label><div class="catpick" style="grid-template-columns:repeat(8,1fr)">${EM.map(e => `<button data-e="${e}" class="${d.e === e ? 'on' : ''}" style="padding:7px 2px"><span class="e">${e}</span></button>`).join('')}</div></div>`,
     foot: `${t ? '<button class="btn danger" data-x="d">🗑</button>' : ''}<button class="btn grow" data-x="c">Cancel</button><button class="btn primary grow" data-x="s">Save</button>`,
     onMount(b, ft) {
+      const whoBox = () => {
+        const box = $('#tpWhoChips', b); if (!box) return;
+        box.innerHTML = passPeople().map(w => `<span class="chip ${tpWho.toLowerCase() === w.toLowerCase() ? 'on' : ''}" data-tpwho="${esc(w)}">${esc(w)}</span>`).join('') + '<span class="chip" data-tpwho-new="1">+ New person</span>';
+        $$('[data-tpwho]', box).forEach(c => c.onclick = () => {
+          tpWho = c.dataset.tpwho; const i = $('#tpWho', b); if (i) i.value = tpWho;
+          $$('[data-tpwho]', box).forEach(x => x.classList.toggle('on', x === c));
+        });
+        $('[data-tpwho-new]', box).onclick = () => promptSheet('New person', 'Who is this money for?', '', (v) => {
+          const n = (v || '').trim(); if (!n) return;
+          addPassPerson(n); tpWho = n; const i = $('#tpWho', b); if (i) i.value = n; whoBox();
+        });
+      };
+      whoBox();
+      const passT = $('#tpPass', b);
+      if (passT) passT.onchange = () => {
+        tpPass = passT.checked ? 1 : 0;
+        $('#tpPassBox', b).style.display = tpPass ? 'block' : 'none';
+        const i = $('#tpWho', b); if (i && !i.value) i.value = tpWho;
+      };
+      const whoInput = $('#tpWho', b); if (whoInput) whoInput.oninput = () => { tpWho = whoInput.value; };
       $$('[data-e]', b).forEach(x => x.onclick = () => { d.e = x.dataset.e; $$('[data-e]', b).forEach(y => y.classList.toggle('on', y === x)); });
       $('#tpType', b).onchange = e => { const s = $('#tpCat', b); s.innerHTML = S.categories.filter(x => x.type === e.target.value).map(x => `<option value="${x.id}">${x.e} ${esc(x.name)}</option>`).join(''); };
       $('[data-x=c]', ft).onclick = () => backSheet();
       if (t) $('[data-x=d]', ft).onclick = () => confirmSheet('Delete template?', `“${esc(t.label)}” will no longer appear on the dashboard.`, 'Delete', () => { markDel('tpl', t.id); S.templates = S.templates.filter(x => x.id !== t.id); closeSheet(); custSave('Template deleted'); });
       $('[data-x=s]', ft).onclick = () => {
         const label = $('#tpLabel', b).value.trim(); if (!label) return toast('Give it a label');
+        const isPass = $('#tpPass', b).checked;
+        const who = ($('#tpWho', b).value || tpWho || '').trim();
+        if (isPass && !who) return toast('Say whose money it is — pick a person or type a name');
+        if (isPass) addPassPerson(who);            /* so the person shows up everywhere else too */
         const rec = { id: t ? t.id : uid('tp'), label, e: d.e, type: $('#tpType', b).value, amount: round2($('#tpAmt', b).value || 0),
-          cat: $('#tpCat', b).value, acc: $('#tpAcc', b).value, note: $('#tpNote', b).value.trim(), tags: d.tags || [] };
+          cat: $('#tpCat', b).value, acc: $('#tpAcc', b).value, note: $('#tpNote', b).value.trim(), tags: d.tags || [],
+          pass: isPass ? 1 : 0, who: isPass ? who : '' };
         if (t) { const i = S.templates.findIndex(x => x.id === t.id); S.templates[i] = rec; } else S.templates.push(rec);
         closeSheet(); custSave(t ? 'Template updated' : 'Template added');
       };
@@ -5474,10 +5513,11 @@ function tplSheet(id) {
 function runTemplate(id) {
   const t = (S.templates || []).find(x => x.id === id); if (!t) return;
   const rec = { id: uid('t'), type: t.type, amount: +t.amount || 0, cat: t.cat, acc: t.acc, to: null, date: todayISO(),
-    time: new Date().toTimeString().slice(0, 5), note: t.note || t.label, tags: [...(t.tags || [])], fields: { ...(t.fields || {}) }, reimb: 0, created: Date.now(), updated: Date.now() };
+    time: new Date().toTimeString().slice(0, 5), note: t.note || t.label, tags: [...(t.tags || [])], fields: { ...(t.fields || {}) }, reimb: 0, created: Date.now(), updated: Date.now(),
+    pass: t.pass ? 1 : 0, who: t.pass ? (t.who || '') : '' };
   const fired = applyRules(rec);
   S.transactions.push(rec); save(true); vibrate(14);
-  toast(`${t.e || '⚡'} ${esc(t.label)} · ${inr(rec.amount)} logged${fired.length ? '  ⚡ ' + fired.join(', ') : ''}`);
+  toast(`${t.e || '⚡'} ${esc(t.label)} · ${inr(rec.amount)} logged${rec.pass ? '  🤝 for ' + esc(rec.who || 'them') : ''}${fired.length ? '  ⚡ ' + fired.join(', ') : ''}`);
   rerender();
 }
 /* --------------------------- rule editor --------------------------------- */
